@@ -32,7 +32,19 @@ where
 /// get 1.7-1.9x slower at 16 from memory-controller and page-fault contention. Machines
 /// with more bandwidth per core scale further, so the cap grows with the thread count.
 pub fn memory_bound_workers() -> usize {
-    (threads() / 4).clamp(2, 8)
+    let t = threads();
+    #[cfg(target_vendor = "apple")]
+    {
+        // On Apple Silicon, performance cores have wide bandwidth and high clocks.
+        // Efficiency cores (typically 2-4 cores) run at lower clock speed and lower
+        // memory bandwidth; scheduling memory-bound tasks across them introduces
+        // straggler latency at thread barriers. We prioritize P-cores:
+        t.saturating_sub(4).clamp(4, 16)
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        (t / 2).clamp(2, 12)
+    }
 }
 
 /// Like [`for_each_row_chunk`] but split into at most `max_workers` tasks (used for

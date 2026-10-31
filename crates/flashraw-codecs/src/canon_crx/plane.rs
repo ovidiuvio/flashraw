@@ -39,6 +39,7 @@ pub(crate) struct BandSource<'a> {
     line: Vec<i32>,
     /// Lines decoded so far (for the per-row quantisation table).
     row: usize,
+    predecoded: Option<Vec<i32>>,
 }
 
 impl<'a> BandSource<'a> {
@@ -50,11 +51,41 @@ impl<'a> BandSource<'a> {
         } else {
             None
         };
-        Ok(BandSource { dec, band, qstep, q_param: band.q_param, q_k: 0, line: vec![0; band.width], row: 0 })
+        Ok(BandSource {
+            dec,
+            band,
+            qstep,
+            q_param: band.q_param,
+            q_k: 0,
+            line: vec![0; band.width],
+            row: 0,
+            predecoded: None,
+        })
+    }
+
+    pub(crate) fn from_predecoded(data: Vec<i32>, band: &'a Subband) -> Self {
+        BandSource {
+            dec: None,
+            band,
+            qstep: None,
+            q_param: 0,
+            q_k: 0,
+            line: Vec::new(),
+            row: 0,
+            predecoded: Some(data),
+        }
     }
 
     /// Next raw (not dequantised) line: lossless planes.
     pub(crate) fn raw_line(&mut self) -> Result<&[i32]> {
+        if let Some(buf) = &self.predecoded {
+            let start = self.row * self.band.width;
+            self.row += 1;
+            if start + self.band.width <= buf.len() {
+                return Ok(&buf[start..start + self.band.width]);
+            }
+            return Err(Error::corrupt("CRX: subband lines exhausted"));
+        }
         match &mut self.dec {
             Some(d) => d.next_line(),
             None => Ok(&self.line),
@@ -63,6 +94,14 @@ impl<'a> BandSource<'a> {
 
     /// Next dequantised line (wavelet bands).
     pub(crate) fn line(&mut self) -> Result<&[i32]> {
+        if let Some(buf) = &self.predecoded {
+            let start = self.row * self.band.width;
+            self.row += 1;
+            if start + self.band.width <= buf.len() {
+                return Ok(&buf[start..start + self.band.width]);
+            }
+            return Err(Error::corrupt("CRX: subband lines exhausted"));
+        }
         let Some(dec) = &mut self.dec else {
             return Ok(&self.line);
         };
@@ -85,6 +124,40 @@ impl<'a> BandSource<'a> {
         }
         Ok(&self.line)
     }
+}
+
+/// Pre-decode all dequantised lines of one subband into a contiguous buffer.
+pub(crate) fn decode_subband(data: &[u8], band: &Subband, mode: LineMode, qstep: Option<&QStep>) -> Result<Vec<i32>> {
+    let total =
+        band.width.checked_mul(band.height).ok_or_else(|| Error::corrupt("CRX: subband dimensions overflow"))?;
+    let mut out = vec![0i32; total];
+    if band.data_size == 0 || band.width == 0 || band.height == 0 {
+        return Ok(out);
+    }
+    let end = band.data_offset.checked_add(band.data_size).filter(|&e| e <= data.len());
+    let end = end.ok_or_else(|| Error::corrupt("CRX: subband data beyond end of file"))?;
+    let mut dec = BandDecoder::new(&data[band.data_offset..end], band.width, band.height, mode);
+    let mut q_param = band.q_param;
+    let mut q_k = 0u32;
+    for row in 0..band.height {
+        let line = &mut out[row * band.width..(row + 1) * band.width];
+        if band.supports_partial && qstep.is_none() {
+            q_param = q_param.wrapping_add(dec.read_qp_delta(&mut q_k)?);
+        }
+        line.copy_from_slice(dec.next_line()?);
+        match qstep {
+            Some(q) => dequant_v2(line, band, q, row),
+            None => {
+                let s = q_scale_v1(q_param);
+                if s != 1 {
+                    for v in line.iter_mut() {
+                        *v = v.wrapping_mul(s);
+                    }
+                }
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Per-position dequantisation of C-RAW v2 (quantisation map from the tile header).
@@ -241,11 +314,13 @@ pub(crate) fn decode_plane(
     tile: &Tile,
     plane: usize,
     levels: usize,
+    predecoded_bands: Option<Vec<Vec<i32>>>,
     mut sink: impl FnMut(usize, &[i32]),
 ) -> Result<()> {
     let p = tile.planes.get(plane).ok_or_else(|| Error::corrupt("CRX: missing plane"))?;
     let bands = &p.bands;
     let qstep = |l: usize| tile.qstep.as_ref().and_then(|q| q.get(l));
+    let mut pre = predecoded_bands;
     if levels == 0 {
         let band = bands.first().ok_or_else(|| Error::corrupt("CRX: missing subband"))?;
         if band.data_size == 0 {
@@ -254,7 +329,10 @@ pub(crate) fn decode_plane(
         }
         let mode =
             if p.supports_partial { LineMode::Predictive { rounded_mask: p.rounded_mask } } else { LineMode::Detail };
-        let mut src = BandSource::new(data, band, mode, None)?;
+        let mut src = match pre.as_mut() {
+            Some(b) if !b.is_empty() => BandSource::from_predecoded(std::mem::take(&mut b[0]), band),
+            _ => BandSource::new(data, band, mode, None)?,
+        };
         for y in 0..tile.height {
             let line = src.raw_line()?;
             if line.len() < tile.width {
@@ -266,7 +344,10 @@ pub(crate) fn decode_plane(
     }
     let ll_mode =
         if p.supports_partial { LineMode::Predictive { rounded_mask: p.rounded_mask } } else { LineMode::Detail };
-    let mut ll = BandSource::new(data, &bands[0], ll_mode, qstep(0))?;
+    let mut ll = match pre.as_mut() {
+        Some(b) if !b.is_empty() => BandSource::from_predecoded(std::mem::take(&mut b[0]), &bands[0]),
+        _ => BandSource::new(data, &bands[0], ll_mode, qstep(0))?,
+    };
     let mut lv = Vec::with_capacity(levels);
     let hs = Sides { before: tile.flags.left, after: tile.flags.right };
     let vs = Sides { before: tile.flags.top, after: tile.flags.bottom };
@@ -289,6 +370,24 @@ pub(crate) fn decode_plane(
         {
             return Err(Error::corrupt("CRX: inconsistent subband sizes"));
         }
+        let hl = match pre.as_mut() {
+            Some(b) if b.len() > 3 * l + 1 => {
+                BandSource::from_predecoded(std::mem::take(&mut b[3 * l + 1]), &bands[3 * l + 1])
+            }
+            _ => BandSource::new(data, &bands[3 * l + 1], LineMode::Detail, qstep(l))?,
+        };
+        let lh = match pre.as_mut() {
+            Some(b) if b.len() > 3 * l + 2 => {
+                BandSource::from_predecoded(std::mem::take(&mut b[3 * l + 2]), &bands[3 * l + 2])
+            }
+            _ => BandSource::new(data, &bands[3 * l + 2], LineMode::Detail, qstep(l))?,
+        };
+        let hh = match pre.as_mut() {
+            Some(b) if b.len() > 3 * l + 3 => {
+                BandSource::from_predecoded(std::mem::take(&mut b[3 * l + 3]), &bands[3 * l + 3])
+            }
+            _ => BandSource::new(data, &bands[3 * l + 3], LineMode::Detail, qstep(l))?,
+        };
         lv.push(Level {
             width,
             height,
@@ -299,9 +398,9 @@ pub(crate) fn decode_plane(
             q_pos: 0,
             q_len: 0,
             emitted: 0,
-            hl: BandSource::new(data, &bands[3 * l + 1], LineMode::Detail, qstep(l))?,
-            lh: BandSource::new(data, &bands[3 * l + 2], LineMode::Detail, qstep(l))?,
-            hh: BandSource::new(data, &bands[3 * l + 3], LineMode::Detail, qstep(l))?,
+            hl,
+            lh,
+            hh,
         });
     }
     for y in 0..tile.height {

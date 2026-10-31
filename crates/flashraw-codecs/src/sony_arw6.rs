@@ -591,32 +591,33 @@ fn packet_planes(
     }
     require(p.records.len() <= stream.len() / 16 + 1, "packet record count")?;
     let mut planes: Vec<Plane> = (0..comps).map(|_| Plane::new(expected, row_width)).collect::<Result<_>>()?;
-    // Records are independent bit streams: decode them in parallel, each into its
-    // own rows of every component plane.
+    // Records are independent bit streams: decode them in parallel directly into
+    // disjoint row slices of every component plane, with zero heap allocations.
     let record_rows = rm * row_width;
-    let mut bufs: Vec<Vec<i32>> = Vec::new();
-    let decode_record = |ri: usize| -> Vec<i32> {
+    #[derive(Copy, Clone)]
+    struct PlanePtr(*mut i32);
+    unsafe impl Send for PlanePtr {}
+    unsafe impl Sync for PlanePtr {}
+
+    let mut ptrs = [PlanePtr(std::ptr::null_mut()); 3];
+    for (ci, plane) in planes.iter_mut().enumerate() {
+        ptrs[ci] = PlanePtr(plane.data.as_mut_ptr());
+    }
+
+    par::for_each_index(p.records.len(), parallel, |ri| {
         let rec = &p.records[ri];
-        let mut buf = vec![0i32; comps * record_rows];
         if rec.byte_length > 0 {
             let mut bits = CoeffBits::new(p.data, rec.payload_offset, rec.byte_length);
             for ci in 0..comps {
                 let shift = if ci < p.kind { rec.selectors[ci] as u32 } else { 0 };
+                let plane_base = unsafe { ptrs[ci].0.add(ri * record_rows) };
                 for r in 0..rm {
-                    let off = ci * record_rows + r * row_width;
-                    decode_component(&mut bits, groups_per_row, shift, &mut buf[off..off + row_width]);
+                    let dst = unsafe { std::slice::from_raw_parts_mut(plane_base.add(r * row_width), row_width) };
+                    decode_component(&mut bits, groups_per_row, shift, dst);
                 }
             }
         }
-        buf
-    };
-    bufs.extend(par::map((0..p.records.len()).collect(), parallel, decode_record));
-    for (ri, buf) in bufs.iter().enumerate() {
-        for (ci, plane) in planes.iter_mut().enumerate() {
-            let dst = &mut plane.data[ri * record_rows..(ri + 1) * record_rows];
-            dst.copy_from_slice(&buf[ci * record_rows..(ci + 1) * record_rows]);
-        }
-    }
+    });
     Ok(planes)
 }
 

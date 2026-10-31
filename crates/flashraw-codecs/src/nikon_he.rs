@@ -752,13 +752,23 @@ impl<'a> HeBits<'a> {
     }
 }
 
+#[derive(Default)]
+struct PrecinctScratch {
+    values: Vec<Vec<u32>>,
+    negative: Vec<Vec<bool>>,
+    significance: Vec<Option<Vec<bool>>>,
+    gcli_pool: Vec<Vec<u8>>,
+    gclis: Vec<Vec<u8>>,
+}
+
 struct SliceState {
     previous: Vec<Option<(Vec<u8>, u8)>>,
+    scratch: PrecinctScratch,
 }
 
 impl SliceState {
     fn new(layout: &Layout) -> Self {
-        Self { previous: vec![None; layout.bands.len()] }
+        Self { previous: vec![None; layout.bands.len()], scratch: PrecinctScratch::default() }
     }
 }
 
@@ -840,7 +850,8 @@ fn decode_precinct(
         let gcli_len = (((head_w & 0x7ff) << 9) | (tail_w >> 15)) as usize;
         let sign_len = (tail_w & 0x7fff) as usize;
 
-        let mut significance: Vec<Option<Vec<bool>>> = Vec::with_capacity(packet.bands.len());
+        let significance = &mut state.scratch.significance;
+        significance.clear();
         if !raw {
             for b in packet.bands.clone() {
                 let band = &layout.bands[b];
@@ -859,12 +870,15 @@ fn decode_precinct(
         }
 
         let gcli_start = bits.byte_pos();
-        let mut gclis: Vec<Vec<u8>> = Vec::with_capacity(packet.bands.len());
+        let gclis = &mut state.scratch.gclis;
+        gclis.clear();
         for (k, b) in packet.bands.clone().enumerate() {
             let band = &layout.bands[b];
             let t = gtli(band);
             let groups = band.width.div_ceil(group);
-            let mut line = vec![0u8; groups];
+            let mut line = state.scratch.gcli_pool.pop().unwrap_or_default();
+            line.clear();
+            line.resize(groups, 0u8);
             if raw {
                 for g in line.iter_mut() {
                     *g = bits.read(header.raw_gcli_bits)? as u8;
@@ -919,15 +933,23 @@ fn decode_precinct(
         bits.skip_to(gcli_start + gcli_len)?;
 
         let data_start = bits.byte_pos();
-        let mut values: Vec<Vec<u32>> = Vec::with_capacity(packet.bands.len());
-        let mut negative: Vec<Vec<bool>> = Vec::with_capacity(packet.bands.len());
+        let n_bands = packet.bands.len();
+        while state.scratch.values.len() < n_bands {
+            state.scratch.values.push(Vec::new());
+        }
+        while state.scratch.negative.len() < n_bands {
+            state.scratch.negative.push(Vec::new());
+        }
         for (k, b) in packet.bands.clone().enumerate() {
             let band = &layout.bands[b];
             let t = gtli(band);
             let groups = band.width.div_ceil(group);
-            let mut v = vec![0u32; groups * group];
+            let n_samples = groups * group;
+            let v = &mut state.scratch.values[k];
+            v.clear();
+            v.resize(n_samples, 0u32);
             for g in 0..groups {
-                let gcli = gclis[k][g];
+                let gcli = state.scratch.gclis[k][g];
                 if gcli <= t {
                     continue;
                 }
@@ -949,15 +971,16 @@ fn decode_precinct(
                 v[base + 2] = v2 << t;
                 v[base + 3] = v3 << t;
             }
-            negative.push(vec![false; v.len()]);
-            values.push(v);
+            let neg = &mut state.scratch.negative[k];
+            neg.clear();
+            neg.resize(n_samples, false);
         }
         bits.align();
         bits.skip_to(data_start + data_len)?;
 
         let sign_start = bits.byte_pos();
         for k in 0..packet.bands.len() {
-            for (val, sign) in values[k].iter().zip(negative[k].iter_mut()) {
+            for (val, sign) in state.scratch.values[k].iter().zip(state.scratch.negative[k].iter_mut()) {
                 if *val != 0 {
                     *sign = bits.read(1)? != 0;
                 }
@@ -972,8 +995,8 @@ fn decode_precinct(
             let row = usize::from(band.high || packet.line == 1) * n + band.component;
             let out_slice = &mut rows[row * w + band.offset..row * w + band.offset + band.width];
             for (i, o) in out_slice.iter_mut().enumerate() {
-                let gcli = gclis[k][i / group];
-                let mut m = values[k][i];
+                let gcli = state.scratch.gclis[k][i / group];
+                let mut m = state.scratch.values[k][i];
                 if t > 0 && gcli > t && m != 0 {
                     let scale = u32::from(gcli - t) + 1;
                     let mut rest = m;
@@ -984,9 +1007,13 @@ fn decode_precinct(
                     }
                 }
                 let val = (m as i32) << header.fraction_bits;
-                *o = if negative[k][i] { -val } else { val };
+                *o = if state.scratch.negative[k][i] { -val } else { val };
             }
-            state.previous[b] = Some((std::mem::take(&mut gclis[k]), t));
+            let prev = state.previous[b].take();
+            if let Some((old_gcli, _)) = prev {
+                state.scratch.gcli_pool.push(old_gcli);
+            }
+            state.previous[b] = Some((std::mem::take(&mut state.scratch.gclis[k]), t));
         }
     }
 

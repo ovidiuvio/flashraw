@@ -24,8 +24,9 @@ mod layout;
 mod plane;
 mod wavelet;
 
+use entropy::LineMode;
 use flashraw_core::{Error, Result, par};
-use layout::Image;
+use layout::{Image, QStep, Subband};
 
 /// The `CMP1` codec header of a CR3 raw track.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,13 +152,58 @@ pub fn decode(h: &CrxHeader, data: &[u8], out: &mut [u16], parallel: bool) -> Re
     let planes = h.planes as usize;
     let levels = h.levels as usize;
     let units = img.tiles.len() * planes;
+    // When multiple wavelet levels are present and parallelism is enabled, decode all
+    // subbands across all tiles and planes concurrently across worker threads.
+    let predecoded: Option<Vec<Vec<Vec<i32>>>> = if levels > 0 && parallel {
+        struct Task<'a> {
+            band: &'a Subband,
+            mode: LineMode,
+            qstep: Option<&'a QStep>,
+        }
+        let mut tasks = Vec::new();
+        let mut band_counts = Vec::with_capacity(units);
+        for tile in &img.tiles {
+            for p in tile.planes.iter().take(planes) {
+                let ll_mode = if p.supports_partial {
+                    LineMode::Predictive { rounded_mask: p.rounded_mask }
+                } else {
+                    LineMode::Detail
+                };
+                band_counts.push(p.bands.len());
+                for (bi, band) in p.bands.iter().enumerate() {
+                    let (mode, qstep_idx) = if bi == 0 { (ll_mode, 0) } else { (LineMode::Detail, (bi - 1) / 3) };
+                    let qstep = tile.qstep.as_ref().and_then(|q| q.get(qstep_idx));
+                    tasks.push(Task { band, mode, qstep });
+                }
+            }
+        }
+        let results = par::map(tasks, parallel, |t| plane::decode_subband(data, t.band, t.mode, t.qstep));
+        let mut by_unit = Vec::with_capacity(units);
+        let mut res_iter = results.into_iter();
+        for count in band_counts {
+            let mut plane_bands = Vec::with_capacity(count);
+            for _ in 0..count {
+                plane_bands.push(res_iter.next().ok_or_else(|| Error::corrupt("CRX: missing subband result"))??);
+            }
+            by_unit.push(plane_bands);
+        }
+        Some(by_unit)
+    } else {
+        None
+    };
+
+    let unit_inputs: Vec<(usize, Option<Vec<Vec<i32>>>)> = if let Some(by_unit) = predecoded {
+        (0..units).zip(by_unit.into_iter().map(Some)).collect()
+    } else {
+        (0..units).map(|u| (u, None)).collect()
+    };
     // Each unit decodes into its own buffer (tile plane, row-major); the interleave
     // into the CFA buffer is a separate parallel pass.
-    let results: Vec<Result<Vec<u16>>> = par::map((0..units).collect(), parallel, |u| {
+    let results: Vec<Result<Vec<u16>>> = par::map(unit_inputs, parallel, |(u, pre_bands)| {
         let tile = &img.tiles[u / planes];
         let mut buf = vec![0u16; tile.width * tile.height];
         let conv = Converter::new(h);
-        plane::decode_plane(data, tile, u % planes, levels, |y, row| {
+        plane::decode_plane(data, tile, u % planes, levels, pre_bands, |y, row| {
             conv.convert(row, &mut buf[y * tile.width..(y + 1) * tile.width]);
         })?;
         Ok(buf)
