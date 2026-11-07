@@ -155,6 +155,11 @@ pub enum Demosaic {
     Bilinear,
     /// 2x2 superpixel binning: half resolution, fastest, no interpolation artefacts.
     HalfSize,
+    /// Directionally weighted 7x7 filters for Bayer and X-Trans sensors: far fewer zipper
+    /// and false-colour artefacts than [`Demosaic::Bilinear`], several times slower. Other
+    /// sensors use bilinear. CPU only (the GPU backend falls back to the CPU for it); the
+    /// result may change between minor versions as the filters improve.
+    EdgeAware,
 }
 
 /// What a decode does when the sensor data is corrupt or truncated.
@@ -298,11 +303,12 @@ impl Default for DecodeOptions {
 }
 
 impl Demosaic {
-    /// Parse a demosaic name (`bilinear`, `half`/`half-size`; case-insensitive).
+    /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
             "bilinear" => Demosaic::Bilinear,
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
+            "edge-aware" | "edgeaware" => Demosaic::EdgeAware,
             _ => return None,
         })
     }
@@ -312,6 +318,7 @@ impl Demosaic {
         match self {
             Demosaic::Bilinear => "bilinear",
             Demosaic::HalfSize => "half-size",
+            Demosaic::EdgeAware => "edge-aware",
         }
     }
 }
@@ -412,7 +419,7 @@ mod tests {
         ] {
             assert_eq!(o.to_string().parse::<OutputFormat>(), Ok(o));
         }
-        for d in [Demosaic::Bilinear, Demosaic::HalfSize] {
+        for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware] {
             assert_eq!(d.to_string().parse::<Demosaic>(), Ok(d));
         }
         for p in [CorruptionPolicy::Strict, CorruptionPolicy::Recover] {

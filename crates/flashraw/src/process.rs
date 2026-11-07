@@ -1,6 +1,6 @@
 //! Optional CPU post-processing for convenience outputs (normalised samples, linear
 //! RGB, display RGBA8). This is deliberately small: FlashRaw is a decoder, not a
-//! raw developer. All RGB outputs come from one fused pass over the sensor data
+//! raw developer (the opt-in edge-aware demosaic is the one larger piece). All RGB outputs come from one fused pass over the sensor data
 //! (black subtraction, scaling, demosaic, white balance, colour matrix, transfer
 //! curve, orientation), with no full-size intermediates.
 //!
@@ -9,6 +9,7 @@
 
 use crate::RawPixelData;
 use crate::color::{ColorSpace, OutputCurve};
+use crate::edgeaware;
 use crate::options::Demosaic;
 use flashraw_core::*;
 
@@ -326,6 +327,9 @@ pub struct DevelopParams {
     /// White balance multipliers per CFA colour index (R, G, B, other), or per channel of
     /// a four-colour CFA (in [`CfaPattern::four_colour_order`]).
     pub wb: [f32; 4],
+    /// The balance the edge-aware demosaic applies to the mosaic before interpolating (the
+    /// same as `wb` except in [`DevelopParams::camera_rgb`], which develops unbalanced).
+    pub dm_wb: [f32; 4],
     pub cam_to_rgb: [[f32; 3]; 3],
     /// Four-colour CFAs: camera channels → linear sRGB (see [`camera4_to_srgb`]); when set
     /// it replaces `cam_to_rgb` and all four channels are demosaiced.
@@ -350,12 +354,14 @@ impl DevelopParams {
             None if cam4_to_rgb.is_some() => camera4_daylight_wb(&info.color_matrices).unwrap_or([1.0; 4]),
             None => [1.0; 4],
         };
+        let wb = if info.layout == SensorLayout::Foveon { normalized_min(wb) } else { wb };
         DevelopParams {
             demosaic,
             crop,
             // Foveon balances scale a layer down (blue ~0.6): with the smallest multiplier
             // at 1, saturated samples stay saturated in every layer and render white.
-            wb: if info.layout == SensorLayout::Foveon { normalized_min(wb) } else { wb },
+            wb,
+            dm_wb: wb,
             cam_to_rgb: camera_to_srgb(&info.color_matrices),
             cam4_to_rgb,
             orientation: info.orientation,
@@ -490,6 +496,10 @@ pub(crate) struct Kernel<'a> {
     levels: Option<Levels>,
     crop: Rect,
     half: bool,
+    /// Edge-aware demosaic of Bayer / X-Trans frames (`Demosaic::EdgeAware`).
+    edge: Option<edgeaware::Plan>,
+    /// Balance applied to the mosaic by the edge-aware demosaic.
+    dm_wb: [f32; 4],
 }
 
 /// Small cache of normalised sensor rows (three are live at a time).
@@ -601,6 +611,11 @@ impl Kernel<'_> {
 
     /// Develop output row `oy` (crop/half coordinates) into `out` (one RGB per output pixel).
     fn row(&self, cache: &mut RowCache, oy: usize, out: &mut [[f32; 3]]) {
+        self.row_cols(cache, oy, out, 0..0)
+    }
+
+    /// [`Kernel::row`] leaving the pixels `skip` (output columns) untouched.
+    fn row_cols(&self, cache: &mut RowCache, oy: usize, out: &mut [[f32; 3]], skip: std::ops::Range<usize>) {
         let img = self.img;
         let (w, h, cpp) = (img.width as usize, img.height as usize, img.cpp as usize);
         let (ox0, oy0) = (self.origin.0, self.origin.1);
@@ -673,6 +688,9 @@ impl Kernel<'_> {
         // Bayer fast path: colour of this row's sites indexed by absolute column parity.
         let row_colors = [color((2 - ox0 % 2) % 2, y), color((3 - ox0 % 2) % 2, y)];
         for (i, o) in out.iter_mut().enumerate() {
+            if skip.contains(&i) {
+                continue;
+            }
             let x = self.crop.x as usize + i;
             if bayer && interior_y && x > 0 && x + 1 < w {
                 let c0 = row_colors[(x + ox0) & 1];
@@ -731,6 +749,61 @@ impl Kernel<'_> {
                 }
             }
             *o = self.finish_n(rgb);
+        }
+    }
+}
+
+impl Kernel<'_> {
+    /// Output rows developed together by one task: the edge-aware demosaic works in bands.
+    pub(crate) fn strip_rows(&self) -> usize {
+        if self.edge.is_some() { edgeaware::BAND_ROWS } else { STRIP as usize }
+    }
+
+    /// Develop output rows `first..first + count` into `out` (`count` rows of one RGB per
+    /// output pixel). The edge-aware demosaic handles the pixels at least
+    /// [`edgeaware::HALO`] away from the frame border; the others are bilinear.
+    fn strip(&self, cache: &mut RowCache, first: usize, count: usize, out: &mut [[f32; 3]]) {
+        let w = self.img.width as usize;
+        let ow = out.len() / count.max(1);
+        let Some(plan) = &self.edge else {
+            for (i, r) in out.chunks_exact_mut(ow).enumerate() {
+                self.row(cache, first + i, r);
+            }
+            return;
+        };
+        let h = self.img.height as usize;
+        let (cx, cy) = (self.crop.x as usize, self.crop.y as usize);
+        let halo = edgeaware::HALO;
+        // Output columns whose pixel is far enough from the left / right frame border.
+        let ia = halo.saturating_sub(cx).min(ow);
+        let ib = (w.saturating_sub(halo).saturating_sub(cx)).min(ow).max(ia);
+        // Output rows (of this strip) far enough from the top / bottom.
+        let lo = halo.saturating_sub(cy).clamp(first, first + count);
+        let hi = h.saturating_sub(halo).saturating_sub(cy).clamp(lo, first + count);
+        for (i, r) in out.chunks_exact_mut(ow).enumerate() {
+            let oy = first + i;
+            if oy >= lo && oy < hi && ib > ia {
+                self.row_cols(cache, oy, r, ia..ib);
+            } else {
+                self.row(cache, oy, r);
+            }
+        }
+        if hi > lo && ib > ia {
+            let (y0, y1, xa, xb) = (cy + lo, cy + hi, cx + ia, cx + ib);
+            let mut buf = vec![[0f32; 3]; (y1 - y0) * (xb - xa)];
+            let mut fetch = |y: usize, row: &mut [f32]| match self.source {
+                Some(f) => f(y, row),
+                None => self.normalize_row(y, row),
+            };
+            plan.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf);
+            // Back to this kernel's balance (1 unless it develops unbalanced camera RGB).
+            let k = [0, 1, 2].map(|c| self.wb[c] / self.dm_wb[c]);
+            for (n, src) in buf.chunks_exact(xb - xa).enumerate() {
+                let dst = &mut out[(lo - first + n) * ow + ia..(lo - first + n) * ow + ib];
+                for (d, s) in dst.iter_mut().zip(src) {
+                    *d = finish_rgb([s[0] * k[0], s[1] * k[1], s[2] * k[2]], &[1.0; 4], &self.m, self.levels);
+                }
+            }
         }
     }
 }
@@ -810,7 +883,18 @@ fn kernel_with<'a>(
         levels: params.levels,
         crop,
         half: params.demosaic == Demosaic::HalfSize,
+        edge: match (params.demosaic, info.cfa) {
+            (Demosaic::EdgeAware, Some(cfa)) if cpp == 1 && m4.is_none() => {
+                edgeaware::Plan::new(&cfa, &chan, origin_usize(origin))
+            }
+            _ => None,
+        },
+        dm_wb: params.dm_wb,
     }
+}
+
+fn origin_usize(o: (u32, u32)) -> (usize, usize) {
+    (o.0 as usize, o.1 as usize)
 }
 
 /// Colour channels developed: R, G, B as 0, 1, 2 (other colours unused), or the
@@ -949,14 +1033,13 @@ pub fn develop(
     let k = kernel(img, info, origin, params, crop);
     let mut out = vec![0f32; ow as usize * oh as usize * 3];
     let rl = ow as usize * 3;
-    par::for_each_row_chunk(&mut out, rl, STRIP as usize, parallel, |first, chunk| {
+    par::for_each_row_chunk(&mut out, rl, k.strip_rows(), parallel, |first, chunk| {
         let mut cache = RowCache::new(img.width as usize * img.cpp as usize);
-        let mut rgb = vec![[0f32; 3]; ow as usize];
-        for (i, orow) in chunk.chunks_mut(rl).enumerate() {
-            k.row(&mut cache, first + i, &mut rgb);
-            for (o, p) in orow.chunks_exact_mut(3).zip(&rgb) {
-                o.copy_from_slice(p);
-            }
+        let n = chunk.len() / rl;
+        let mut rgb = vec![[0f32; 3]; ow as usize * n];
+        k.strip(&mut cache, first, n, &mut rgb);
+        for (o, p) in chunk.chunks_exact_mut(3).zip(&rgb) {
+            o.copy_from_slice(p);
         }
     });
     Ok(Developed { width: ow, height: oh, rgb: out })
@@ -1090,7 +1173,8 @@ where
     let mut out = vec![T::default(); dw * dh * N];
     // Destination strips: horizontal (rows) normally, vertical (columns) when transposing,
     // so each strip corresponds to a contiguous range of developed rows.
-    let (tw, th) = if swap { (STRIP, dh as u32) } else { (dw as u32, STRIP) };
+    let strip = k.strip_rows();
+    let (tw, th) = if swap { (strip as u32, dh as u32) } else { (dw as u32, strip as u32) };
     let grid = par::GridWriter::new(&mut out, dw as u32, dh as u32, N as u32, (0, 0), tw, th, dw as u32, dh as u32)
         .ok_or_else(|| Error::InvalidArgument("invalid output size".into()))?;
     let n = if swap { grid.tiles_x() } else { grid.tiles_y() } as usize;
@@ -1113,7 +1197,7 @@ where
         let (tw_, th_) = tile.size();
         let count = if swap { tw_ } else { th_ };
         let src_row = |i: usize| {
-            let d = t * STRIP as usize + i;
+            let d = t * strip + i;
             if rev_y { h - 1 - d } else { d }
         };
         let mut put = |i: usize, rgb: &[[f32; 3]]| {
@@ -1130,20 +1214,20 @@ where
             }
         };
         match band {
-            None => {
+            None if k.strip_rows() == STRIP as usize => {
                 let mut rgb = vec![[0f32; 3]; w];
                 for i in 0..count {
                     k.row(&mut cache, src_row(i), &mut rgb);
                     put(i, &rgb);
                 }
             }
-            Some(hook) => {
+            _ => {
                 let first = if rev_y { src_row(count - 1) } else { src_row(0) };
                 let mut buf = vec![[0f32; 3]; w * count];
-                for (j, r) in buf.chunks_exact_mut(w).enumerate() {
-                    k.row(&mut cache, first + j, r);
+                k.strip(&mut cache, first, count, &mut buf);
+                if let Some(hook) = band {
+                    hook(first, &mut buf);
                 }
-                hook(first, &mut buf);
                 for i in 0..count {
                     let s = src_row(i) - first;
                     put(i, &buf[s * w..(s + 1) * w]);

@@ -101,6 +101,7 @@
 #![warn(missing_docs)]
 
 mod color;
+mod edgeaware;
 mod frame;
 mod icc;
 // GPU backend (see crate::gpu and docs/gpu.md).

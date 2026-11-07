@@ -101,6 +101,15 @@ fn workload(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Option<Workload> {
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
+    // The edge-aware demosaic runs on the CPU only.
+    if opts.demosaic == crate::Demosaic::EdgeAware
+        && !matches!(base, OutputFormat::RawU16 | OutputFormat::NormalizedF32)
+    {
+        if resident {
+            return Err(Error::NotAvailable("GPU-resident RGB output with the edge-aware demosaic".into()));
+        }
+        return Ok(None);
+    }
     // Output ICC profiles are applied by the CPU pipeline (the GPU kernels know the built-in
     // colour spaces only).
     if opts.output_profile.is_some() {
