@@ -75,6 +75,7 @@ no adapter exists.
 | develop → sRGB RGBA8 with all 8 EXIF orientations | `process::develop_rgba8` | ±1 on < 0.1 % of samples (synthetic: 0; real files ≤ 0.0002 %) |
 | develop → 16-bit sRGB (`Rgb16`, oriented), linear 16-bit, linear half floats, with and without exposure/black/white points | `process::develop_encoded` | one code / one half-float ULP on < 1 % of samples (Metal: ≤ 0.21 % synthetic, ≤ 0.07 % on real files; software Vulkan: 0) |
 | half-size 2x2 superpixel | `process::develop` (HalfSize) | same as above |
+| edge-aware demosaic | not implemented on the GPU (CPU only, see [edge-aware-demosaic](design/edge-aware-demosaic.md)) | `Backend::Auto` and `Backend::Gpu` decode on the CPU; GPU-resident outputs return `NotAvailable` |
 
 The GPU path reproduces the CPU semantics exactly:
 * **Bilinear demosaic:** a site's own colour is the centre sample. Each other colour is

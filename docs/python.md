@@ -131,7 +131,7 @@ frame = raw.decode(
     threads=None,                # worker threads for this decode (None = all cores)
     region=None,                 # Rect / (x, y, width, height) / dict, sensor coordinates
     crop=True,                   # RGB outputs: default crop; "active": raw outputs → active area
-    demosaic="bilinear",         # or "half-size" (2x2 binning)
+    demosaic="bilinear",         # or "half-size" (2x2 binning), "edge-aware" (Bayer/X-Trans, slower, cleaner)
     apply_opcodes=True,          # DNG opcode lists (bad pixels, gain maps, ...)
     corruption_policy="recover", # or "strict"
     exposure=0.0,                # RGB outputs: EV applied to linear values before encoding

@@ -266,7 +266,7 @@ const f = await raw.decode({
   output: 'raw-u16',        // 'raw-u16' | 'raw-f32' | 'normalized' | 'linear-rgb' | 'linear-rgb16'
                             // | 'linear-rgb-f16' | 'rgba8' | 'rgb16'
   backend: 'auto',          // 'auto' | 'cpu' (scalar reference) | 'cpu-simd' | 'gpu'
-  demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size'
+  demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size' | 'edge-aware' (Bayer/X-Trans, CPU only)
   crop: true,               // RGB outputs: apply the default crop; raw outputs: 'active' = active area only
   sampleType: 'f32',        // normalized, linear-rgb: 'f16' = half floats (Uint16Array bits, half the memory)
   exposure: 0,              // RGB outputs: EV applied to linear values before encoding

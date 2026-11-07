@@ -128,6 +128,14 @@ such.
 - Malformed input: truncated/corrupted RAF files (synthetic and corpus) return errors,
   never panic (`fuji::tests`, codec tests, mutation runs over the corpus).
 
+## Developing X-Trans images
+
+X-Trans samples red and blue one pixel in five, so the default `bilinear` develop (a 3x3 same-colour average)
+leaves isolated green, magenta and blue dots where bright and dark detail meet. For developed output
+(`rgba8`, `rgb16`, `linear-rgb*`) use `Demosaic::EdgeAware` (`--demosaic edge-aware`): directionally weighted 7x7
+filters and a colour-difference median, about 4 to 5 times the develop time, CPU only. Method and numbers:
+[edge-aware demosaic](../design/edge-aware-demosaic.md).
+
 ## Performance (16 cores)
 
 Standalone `flashraw benchmark` medians:
