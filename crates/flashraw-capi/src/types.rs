@@ -64,6 +64,17 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
 }
 
+/// Clipped highlights of the RGB outputs (`flashraw_decode_options.highlights`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum flashraw_highlights {
+    /// Clamp each channel at the white level; partly clipped pixels keep a colour cast. The default.
+    FLASHRAW_HIGHLIGHTS_CLIP = 0,
+    /// Fade pixels at or near sensor saturation to white. CPU only (the GPU backend decodes on
+    /// the CPU for it).
+    FLASHRAW_HIGHLIGHTS_NEUTRAL = 1,
+}
+
 /// Behaviour on truncated or corrupt sensor data (`flashraw_decode_options.corruption_policy`).
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -440,8 +451,9 @@ pub struct flashraw_decode_options {
     /// Non-zero: black point compensation for `output_profile` (profiles with lookup
     /// tables). Default 0.
     pub black_point_compensation: i32,
-    /// Reserved, must be 0.
-    pub reserved: i32,
+    /// `flashraw_highlights` of the RGB outputs. Default `FLASHRAW_HIGHLIGHTS_CLIP` (0; this
+    /// field was reserved and zero before).
+    pub highlights: i32,
     /// ICC profile to convert the RGB outputs to instead of `color_space` (NULL: none).
     /// Needs a build with ICC support (`flashraw_icc_supported()`); read during
     /// `flashraw_decode()` only, so it need not outlive the call.
@@ -603,6 +615,14 @@ pub(crate) fn intent_from(v: i32) -> FfiResult<RenderingIntent> {
     })
 }
 
+pub(crate) fn highlights_from(v: i32) -> FfiResult<flashraw::Highlights> {
+    Ok(match v {
+        0 => flashraw::Highlights::Clip,
+        1 => flashraw::Highlights::Neutral,
+        _ => return Err(FfiError::invalid(format!("unknown highlights {v}"))),
+    })
+}
+
 pub(crate) fn demosaic_from(v: i32) -> FfiResult<Demosaic> {
     Ok(match v {
         0 => Demosaic::Bilinear,
@@ -697,7 +717,7 @@ mod tests {
         assert_eq!(size_of::<flashraw_open_options>(), flashraw_open_options::MIN_SIZE);
         assert_eq!(flashraw_decode_options::MIN_SIZE, 64);
         // Grown since: exposure, black_point, white_point, preview_fallback (80 bytes), then
-        // color_space, intent, black_point_compensation, reserved and the output profile
+        // color_space, intent, black_point_compensation, highlights and the output profile
         // pointer and length (pointer-sized, so the total depends on the platform).
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, preview_fallback), 76);
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, color_space), 80);

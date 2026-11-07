@@ -10,7 +10,7 @@
 use crate::RawPixelData;
 use crate::color::{ColorSpace, OutputCurve};
 use crate::edgeaware;
-use crate::options::Demosaic;
+use crate::options::{Demosaic, Highlights};
 use flashraw_core::*;
 
 /// sRGB (D65) → XYZ.
@@ -337,6 +337,8 @@ pub struct DevelopParams {
     pub orientation: Orientation,
     /// Exposure / black / white points (`None`: none).
     pub levels: Option<Levels>,
+    /// Clipped highlights (see [`Highlights`]).
+    pub highlights: Highlights,
     /// Transfer curve of the display encoders (sRGB unless an output colour space or
     /// profile is set; the matching primaries are already folded into the matrices).
     pub curve: OutputCurve,
@@ -366,6 +368,7 @@ impl DevelopParams {
             cam4_to_rgb,
             orientation: info.orientation,
             levels: None,
+            highlights: Highlights::Clip,
             curve: OutputCurve::Srgb,
         }
     }
@@ -410,12 +413,35 @@ impl DevelopParams {
     }
 }
 
+/// Normalised level (per channel, before white balance) where [`Highlights::Neutral`] starts
+/// fading a pixel to white; it is fully white at 1, the sensor's saturation.
+const NEUTRAL_START: f32 = 0.95;
+
 /// White balance, clip at sensor saturation, camera → linear sRGB, levels.
 #[inline(always)]
-pub(crate) fn finish_rgb(rgb: [f32; 3], wb: &[f32; 4], m: &[[f32; 3]; 3], levels: Option<Levels>) -> [f32; 3] {
-    let r = (rgb[0] * wb[0]).clamp(0.0, 1.0);
-    let g = (rgb[1] * wb[1]).clamp(0.0, 1.0);
-    let b = (rgb[2] * wb[2]).clamp(0.0, 1.0);
+pub(crate) fn finish_rgb(
+    rgb: [f32; 3],
+    wb: &[f32; 4],
+    m: &[[f32; 3]; 3],
+    levels: Option<Levels>,
+    highlights: Highlights,
+) -> [f32; 3] {
+    let mut r = (rgb[0] * wb[0]).clamp(0.0, 1.0);
+    let mut g = (rgb[1] * wb[1]).clamp(0.0, 1.0);
+    let mut b = (rgb[2] * wb[2]).clamp(0.0, 1.0);
+    if highlights == Highlights::Neutral {
+        // The brightest channel (as measured, before white balance) tells how close the pixel
+        // is to clipping: fade the others up to the brightest balanced one.
+        let s = rgb[0].max(rgb[1]).max(rgb[2]);
+        if s > NEUTRAL_START {
+            let x = ((s - NEUTRAL_START) / (1.0 - NEUTRAL_START)).min(1.0);
+            let t = x * x * (3.0 - 2.0 * x);
+            let mx = r.max(g).max(b);
+            r += (mx - r) * t;
+            g += (mx - g) * t;
+            b += (mx - b) * t;
+        }
+    }
     let mut o = [
         m[0][0] * r + m[0][1] * g + m[0][2] * b,
         m[1][0] * r + m[1][1] * g + m[1][2] * b,
@@ -494,6 +520,7 @@ pub(crate) struct Kernel<'a> {
     wb: [f32; 4],
     m: [[f32; 3]; 3],
     levels: Option<Levels>,
+    highlights: Highlights,
     crop: Rect,
     half: bool,
     /// Edge-aware demosaic of Bayer / X-Trans frames (`Demosaic::EdgeAware`).
@@ -606,7 +633,7 @@ impl Kernel<'_> {
 
     #[inline(always)]
     fn finish(&self, rgb: [f32; 3]) -> [f32; 3] {
-        finish_rgb(rgb, &self.wb, &self.m, self.levels)
+        finish_rgb(rgb, &self.wb, &self.m, self.levels, self.highlights)
     }
 
     /// Develop output row `oy` (crop/half coordinates) into `out` (one RGB per output pixel).
@@ -801,7 +828,13 @@ impl Kernel<'_> {
             for (n, src) in buf.chunks_exact(xb - xa).enumerate() {
                 let dst = &mut out[(lo - first + n) * ow + ia..(lo - first + n) * ow + ib];
                 for (d, s) in dst.iter_mut().zip(src) {
-                    *d = finish_rgb([s[0] * k[0], s[1] * k[1], s[2] * k[2]], &[1.0; 4], &self.m, self.levels);
+                    *d = finish_rgb(
+                        [s[0] * k[0], s[1] * k[1], s[2] * k[2]],
+                        &[1.0; 4],
+                        &self.m,
+                        self.levels,
+                        self.highlights,
+                    );
                 }
             }
         }
@@ -881,6 +914,7 @@ fn kernel_with<'a>(
         wb: if m4.is_some() { normalized_min(params.wb) } else { params.wb },
         m: params.cam_to_rgb,
         levels: params.levels,
+        highlights: params.highlights,
         crop,
         half: params.demosaic == Demosaic::HalfSize,
         edge: match (params.demosaic, info.cfa) {
@@ -1108,7 +1142,7 @@ pub(crate) fn develop_staged(
             f(first, band);
         }
         for p in band.iter_mut() {
-            *p = finish_rgb(*p, &params.wb, &params.cam_to_rgb, params.levels);
+            *p = finish_rgb(*p, &params.wb, &params.cam_to_rgb, params.levels, params.highlights);
         }
     };
     let (k, band): (Kernel, Option<&BandHook<'_>>) = match camera {
@@ -1430,6 +1464,25 @@ mod tests {
     fn identity_matrix_without_color() {
         let m = camera_to_srgb(&ColorMatrices::default());
         assert_eq!(m[0], [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn neutral_highlights_remove_the_cast_of_partly_clipped_pixels() {
+        let wb = [2.0, 1.0, 1.5, 1.0];
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h);
+        // Green at saturation, red and blue below it: clip keeps a green cast, neutral is white.
+        let partly = [0.45, 1.0, 0.6];
+        assert!(f(partly, Highlights::Clip)[0] < 0.95);
+        assert_eq!(f(partly, Highlights::Neutral), [1.0, 1.0, 1.0]);
+        // Halfway to saturation the fade is partial and monotonic.
+        let near = f([0.4, 0.975, 0.5], Highlights::Neutral);
+        let clip = f([0.4, 0.975, 0.5], Highlights::Clip);
+        assert!(near[0] > clip[0] && near[0] < 0.975 + 1e-3, "{near:?} {clip:?}");
+        // Pixels away from saturation, and fully clipped ones, are identical in both modes.
+        for px in [[0.3, 0.4, 0.2], [0.0, 0.0, 0.0], [1.0, 1.0, 1.0]] {
+            assert_eq!(f(px, Highlights::Clip), f(px, Highlights::Neutral), "{px:?}");
+        }
     }
 
     #[test]

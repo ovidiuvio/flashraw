@@ -2,8 +2,8 @@
 
 use crate::{convert, invalid, make_error, to_pyerr};
 use flashraw::{
-    Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Limits, OutputFormat, OutputProfile,
-    PreviewInfo, RawFrame, RawPixelData, Rect, RenderingIntent,
+    Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, Limits, OutputFormat,
+    OutputProfile, PreviewInfo, RawFrame, RawPixelData, Rect, RenderingIntent,
 };
 use numpy::ndarray::{ArrayD, IxDyn};
 use numpy::{Element, PyArray};
@@ -296,7 +296,7 @@ impl RawFile {
         threads: Option<usize>,
         region: Option<(u32, u32, u32, u32)>,
         crop: Option<&Bound<'_, PyAny>>,
-        demosaic: &str,
+        (demosaic, highlights): (&str, &str),
         apply_opcodes: bool,
         corruption_policy: &str,
         levels: (f32, f32, f32),
@@ -326,6 +326,8 @@ impl RawFile {
         let dm = Demosaic::parse(demosaic).ok_or_else(|| {
             invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size or edge-aware)"))
         })?;
+        let hl = Highlights::parse(highlights)
+            .ok_or_else(|| invalid(py, format!("unknown highlights {highlights:?} (expected clip or neutral)")))?;
         let policy = CorruptionPolicy::parse(corruption_policy).ok_or_else(|| {
             invalid(py, format!("unknown `corruption_policy` {corruption_policy:?} (expected recover or strict)"))
         })?;
@@ -382,6 +384,7 @@ impl RawFile {
             region,
             crop: crop_rgb,
             demosaic: dm,
+            highlights: hl,
             apply_opcodes,
             limits,
             corruption_policy: policy,
@@ -565,7 +568,7 @@ impl RawFile {
         output="raw-u16", backend="auto", threads=None, region=None, crop=None, demosaic="bilinear",
         apply_opcodes=true, corruption_policy="recover", tile=None, exposure=0.0, black_point=0.0,
         white_point=1.0, preview_fallback=false, color_space="srgb", output_profile=None,
-        intent="perceptual", black_point_compensation=false
+        intent="perceptual", black_point_compensation=false, highlights="clip"
     ))]
     #[allow(clippy::too_many_arguments)]
     fn decode<'py>(
@@ -588,6 +591,7 @@ impl RawFile {
         output_profile: Option<&[u8]>,
         intent: &str,
         black_point_compensation: bool,
+        highlights: &str,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
         let mut req = Self::parse_request(
             py,
@@ -596,7 +600,7 @@ impl RawFile {
             threads,
             region,
             crop,
-            demosaic,
+            (demosaic, highlights),
             apply_opcodes,
             corruption_policy,
             (exposure, black_point, white_point),

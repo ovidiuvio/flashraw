@@ -512,6 +512,7 @@ class RawFile:
         output_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
         intent: str = "perceptual",
         black_point_compensation: bool = False,
+        highlights: str = "clip",
     ) -> Frame:
         """Decode the sensor data. The GIL is released while decoding.
 
@@ -531,7 +532,8 @@ class RawFile:
             region: decode only this rectangle (sensor-buffer coordinates).
             crop: RGB outputs: crop to the recommended crop (default ``True``). Raw outputs
                 are never cropped by ``True``; ``"active"`` crops them to the active area.
-            demosaic: ``"bilinear"`` or ``"half-size"`` (2x2 binning) for RGB outputs.
+            demosaic: ``"bilinear"`` (default), ``"half-size"`` (2x2 binning) or ``"edge-aware"``
+                (Bayer and X-Trans: cleaner edges, several times slower, CPU only) for RGB outputs.
             apply_opcodes: apply DNG opcode lists (bad pixels, gain maps...).
             corruption_policy: ``"recover"`` (default; zero-fill what is missing and report it
                 in :attr:`Frame.warnings`) or ``"strict"`` (raise :class:`CorruptFileError`).
@@ -557,6 +559,8 @@ class RawFile:
             intent: rendering intent for ``output_profile``: ``"perceptual"`` (default),
                 ``"relative"``, ``"saturation"`` or ``"absolute"``.
             black_point_compensation: black point compensation for ``output_profile``.
+            highlights: ``"clip"`` (default) or ``"neutral"``: fade pixels at or near sensor
+                saturation to white instead of leaving a colour cast (CPU only).
         """
         t0 = time.perf_counter()
         array, info = self._native.decode(
@@ -577,6 +581,7 @@ class RawFile:
             _profile_bytes(output_profile),
             intent,
             black_point_compensation,
+            highlights,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -601,6 +606,7 @@ class RawFile:
         output_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
         intent: str = "perceptual",
         black_point_compensation: bool = False,
+        highlights: str = "clip",
     ) -> Frame:
         """Decode one independently decodable tile/strip (see :attr:`tiles`)."""
         t0 = time.perf_counter()
@@ -622,6 +628,7 @@ class RawFile:
             _profile_bytes(output_profile),
             intent,
             black_point_compensation,
+            highlights,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 

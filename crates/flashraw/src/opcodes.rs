@@ -334,7 +334,13 @@ impl Lists {
             for (i, row) in out.chunks_exact_mut(cw * 3).enumerate() {
                 let src = &dev[((cy + first + i) * dw as usize + cx) * 3..][..cw * 3];
                 for (o, p) in row.chunks_exact_mut(3).zip(src.chunks_exact(3)) {
-                    let v = process::finish_rgb([p[0], p[1], p[2]], &lparams.wb, &lparams.cam_to_rgb, lparams.levels);
+                    let v = process::finish_rgb(
+                        [p[0], p[1], p[2]],
+                        &lparams.wb,
+                        &lparams.cam_to_rgb,
+                        lparams.levels,
+                        lparams.highlights,
+                    );
                     o.copy_from_slice(&v);
                 }
             }
@@ -443,7 +449,13 @@ mod tests {
         for y in c.y - win.y..c.bottom() - win.y {
             for x in c.x - win.x..c.right() - win.x {
                 let p = &dev.rgb[(y * dev.width + x) as usize * 3..][..3];
-                rgb.extend(process::finish_rgb([p[0], p[1], p[2]], &params.wb, &params.cam_to_rgb, params.levels));
+                rgb.extend(process::finish_rgb(
+                    [p[0], p[1], p[2]],
+                    &params.wb,
+                    &params.cam_to_rgb,
+                    params.levels,
+                    params.highlights,
+                ));
             }
         }
         process::encode_image(

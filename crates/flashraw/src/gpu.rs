@@ -101,12 +101,14 @@ fn workload(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Option<Workload> {
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The edge-aware demosaic runs on the CPU only.
-    if opts.demosaic == crate::Demosaic::EdgeAware
+    // The edge-aware demosaic and the neutral highlight mode run on the CPU only.
+    if (opts.demosaic == crate::Demosaic::EdgeAware || opts.highlights != crate::Highlights::Clip)
         && !matches!(base, OutputFormat::RawU16 | OutputFormat::NormalizedF32)
     {
         if resident {
-            return Err(Error::NotAvailable("GPU-resident RGB output with the edge-aware demosaic".into()));
+            return Err(Error::NotAvailable(
+                "GPU-resident RGB output with the edge-aware demosaic or neutral highlights".into(),
+            ));
         }
         return Ok(None);
     }

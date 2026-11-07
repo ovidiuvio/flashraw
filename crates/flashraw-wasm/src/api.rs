@@ -258,6 +258,10 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
             ApiError::invalid(format!("unknown `corruptionPolicy` {p:?} (expected recover or strict)"))
         })?;
     }
+    if let Some(h) = str_opt(&v, "highlights")? {
+        o.highlights = flashraw::Highlights::parse(h)
+            .ok_or_else(|| ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip or neutral)")))?;
+    }
     match v.get("applyOpcodes") {
         None | Some(Value::Null) => {}
         Some(Value::Bool(b)) => o.apply_opcodes = *b,

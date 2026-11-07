@@ -178,6 +178,11 @@ enum class demosaic : std::int32_t {
     edge_aware = FLASHRAW_DEMOSAIC_EDGE_AWARE,
 };
 
+enum class highlights : std::int32_t {
+    clip = FLASHRAW_HIGHLIGHTS_CLIP,
+    neutral = FLASHRAW_HIGHLIGHTS_NEUTRAL,
+};
+
 enum class corruption_policy : std::int32_t {
     recover = FLASHRAW_CORRUPTION_RECOVER,
     strict = FLASHRAW_CORRUPTION_STRICT,
@@ -300,6 +305,7 @@ struct decode_options {
     flashraw::backend backend = flashraw::backend::automatic;
     flashraw::output_format output = flashraw::output_format::raw_u16;
     flashraw::demosaic demosaic = flashraw::demosaic::bilinear;
+    flashraw::highlights highlights = flashraw::highlights::clip;
     flashraw::corruption_policy corruption = flashraw::corruption_policy::recover;
     /// Worker threads (0 = all cores).
     unsigned threads = 0;
@@ -333,6 +339,7 @@ struct decode_options {
         o.backend = static_cast<std::int32_t>(backend);
         o.output = static_cast<std::int32_t>(output);
         o.demosaic = static_cast<std::int32_t>(demosaic);
+        o.highlights = static_cast<std::int32_t>(highlights);
         o.corruption_policy = static_cast<std::int32_t>(corruption);
         o.threads = threads;
         o.crop = crop ? 1 : 0;

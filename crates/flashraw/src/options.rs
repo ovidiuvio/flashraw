@@ -162,6 +162,21 @@ pub enum Demosaic {
     EdgeAware,
 }
 
+/// What RGB outputs do with clipped highlights (samples at the sensor's saturation level).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum Highlights {
+    /// Clamp each channel to the white level after white balance. Partly clipped pixels keep
+    /// a colour cast (usually magenta or yellow). The default.
+    #[default]
+    Clip,
+    /// Pixels with a channel at or near saturation fade smoothly to a neutral white, which
+    /// removes the colour cast around blown highlights. CPU only (the GPU backend decodes on
+    /// the CPU for it).
+    Neutral,
+}
+
 /// What a decode does when the sensor data is corrupt or truncated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -223,6 +238,8 @@ pub struct DecodeOptions {
     pub crop: bool,
     /// Demosaic algorithm for RGB outputs. Default: [`Demosaic::Bilinear`].
     pub demosaic: Demosaic,
+    /// Clipped highlights of RGB outputs. Default: [`Highlights::Clip`].
+    pub highlights: Highlights,
     /// Apply DNG opcode lists (bad pixels, lens-shading gain maps, ...) in their
     /// specified stages. Geometric opcodes are never applied. Default: true.
     pub apply_opcodes: bool,
@@ -289,6 +306,7 @@ impl Default for DecodeOptions {
             region: None,
             crop: true,
             demosaic: Demosaic::Bilinear,
+            highlights: Highlights::Clip,
             apply_opcodes: true,
             limits: Limits::default(),
             corruption_policy: CorruptionPolicy::Recover,
@@ -319,6 +337,25 @@ impl Demosaic {
             Demosaic::Bilinear => "bilinear",
             Demosaic::HalfSize => "half-size",
             Demosaic::EdgeAware => "edge-aware",
+        }
+    }
+}
+
+impl Highlights {
+    /// Parse a highlight mode name (`clip`, `neutral`; case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "clip" => Highlights::Clip,
+            "neutral" => Highlights::Neutral,
+            _ => return None,
+        })
+    }
+
+    /// Canonical name, accepted by [`Highlights::parse`].
+    pub fn name(self) -> &'static str {
+        match self {
+            Highlights::Clip => "clip",
+            Highlights::Neutral => "neutral",
         }
     }
 }
@@ -390,6 +427,7 @@ macro_rules! name_traits {
 name_traits!(Backend, "backend");
 name_traits!(OutputFormat, "output format");
 name_traits!(Demosaic, "demosaic");
+name_traits!(Highlights, "highlight mode");
 name_traits!(CorruptionPolicy, "corruption policy");
 name_traits!(ColorSpace, "color space");
 name_traits!(RenderingIntent, "rendering intent");
@@ -418,6 +456,9 @@ mod tests {
             OutputFormat::GpuRgba8,
         ] {
             assert_eq!(o.to_string().parse::<OutputFormat>(), Ok(o));
+        }
+        for h in [Highlights::Clip, Highlights::Neutral] {
+            assert_eq!(h.to_string().parse::<Highlights>(), Ok(h));
         }
         for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware] {
             assert_eq!(d.to_string().parse::<Demosaic>(), Ok(d));

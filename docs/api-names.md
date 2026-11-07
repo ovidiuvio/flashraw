@@ -14,6 +14,7 @@ Parsers accept the aliases listed; the canonical name is the first one. Each row
 | Backend: CPU with SIMD unpack kernels | `Backend::CpuSimd` (`"simd"`, alias `cpu-simd`) | `simd` | `"simd"` | `'cpu-simd'` (alias `'simd'`) | `FLASHRAW_BACKEND_CPU_SIMD` |
 | Backend: GPU | `Backend::Gpu` (`"gpu"`, alias `webgpu`) | `gpu` | `"gpu"` | `'gpu'` (alias `'webgpu'`) | `FLASHRAW_BACKEND_GPU` |
 | Demosaic: 2x2 binning, half resolution | `Demosaic::HalfSize` (`"half-size"`, aliases `half`, `halfsize`) | `half` (also `half-size`) | `"half-size"` | `'half-size'` | `FLASHRAW_DEMOSAIC_HALF_SIZE` |
+| Highlights: clamp (default) / fade clipped pixels to white (CPU only) | `Highlights::Clip` / `Highlights::Neutral` (`"clip"`, `"neutral"`) | `--highlights clip\|neutral` | `highlights="clip"` / `"neutral"` | `highlights: 'clip'` / `'neutral'` | `FLASHRAW_HIGHLIGHTS_CLIP` / `FLASHRAW_HIGHLIGHTS_NEUTRAL` (`flashraw_decode_options.highlights`) |
 | Demosaic: edge-aware (Bayer, X-Trans; CPU only) | `Demosaic::EdgeAware` (`"edge-aware"`, alias `edgeaware`) | `edge-aware` | `"edge-aware"` | `'edge-aware'` | `FLASHRAW_DEMOSAIC_EDGE_AWARE` |
 | Demosaic: bilinear | `Demosaic::Bilinear` | `bilinear` | `"bilinear"` | `'bilinear'` | `FLASHRAW_DEMOSAIC_BILINEAR` |
 | Output: sensor samples as stored | `OutputFormat::RawU16` (`"raw-u16"`, aliases `raw`, `u16`) | `raw-u16` | `"raw-u16"` | `'raw-u16'` | `FLASHRAW_OUTPUT_RAW_U16` |

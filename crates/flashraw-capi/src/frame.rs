@@ -59,7 +59,7 @@ pub(crate) fn default_decode_options() -> flashraw_decode_options {
         color_space: flashraw_color_space::FLASHRAW_COLOR_SPACE_SRGB as i32,
         intent: flashraw_rendering_intent::FLASHRAW_INTENT_PERCEPTUAL as i32,
         black_point_compensation: 0,
-        reserved: 0,
+        highlights: 0,
         output_profile: std::ptr::null(),
         output_profile_len: 0,
     }
@@ -85,6 +85,7 @@ pub(crate) fn to_decode_options(o: &flashraw_decode_options, base: flashraw::Lim
         backend: backend_from(o.backend)?,
         output: output_from(o.output)?,
         demosaic: demosaic_from(o.demosaic)?,
+        highlights: highlights_from(o.highlights)?,
         corruption_policy: policy_from(o.corruption_policy)?,
         threads: (o.threads != 0).then_some(o.threads as usize),
         crop: o.crop != 0,

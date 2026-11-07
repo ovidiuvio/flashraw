@@ -231,6 +231,32 @@ typedef int32_t flashraw_demosaic;
 #endif // __cplusplus
 
 /**
+ * Clipped highlights of the RGB outputs (`flashraw_decode_options.highlights`).
+ */
+enum flashraw_highlights
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Clamp each channel at the white level; partly clipped pixels keep a colour cast. The default.
+     */
+    FLASHRAW_HIGHLIGHTS_CLIP = 0,
+    /**
+     * Fade pixels at or near sensor saturation to white. CPU only (the GPU backend decodes on
+     * the CPU for it).
+     */
+    FLASHRAW_HIGHLIGHTS_NEUTRAL = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum flashraw_highlights flashraw_highlights;
+#else
+typedef int32_t flashraw_highlights;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Behaviour on truncated or corrupt sensor data (`flashraw_decode_options.corruption_policy`).
  */
 enum flashraw_corruption_policy
@@ -898,9 +924,10 @@ typedef struct flashraw_decode_options {
      */
     int32_t black_point_compensation;
     /**
-     * Reserved, must be 0.
+     * `flashraw_highlights` of the RGB outputs. Default `FLASHRAW_HIGHLIGHTS_CLIP` (0; this
+     * field was reserved and zero before).
      */
-    int32_t reserved;
+    int32_t highlights;
     /**
      * ICC profile to convert the RGB outputs to instead of `color_space` (NULL: none).
      * Needs a build with ICC support (`flashraw_icc_supported()`); read during

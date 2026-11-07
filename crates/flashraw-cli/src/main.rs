@@ -6,8 +6,8 @@ mod probe;
 
 use clap::{Args, Parser, Subcommand};
 use flashraw::{
-    Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, OutputFormat, OutputProfile, Rect,
-    RenderingIntent,
+    Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, OutputFormat, OutputProfile,
+    Rect, RenderingIntent,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -40,6 +40,9 @@ struct DecodeArgs {
     /// Demosaic for RGB outputs: bilinear, half, edge-aware.
     #[arg(long, default_value = "bilinear")]
     demosaic: String,
+    /// Clipped highlights of RGB outputs: clip, neutral.
+    #[arg(long, default_value = "clip")]
+    highlights: String,
     /// Do not apply DNG opcode lists (bad pixels, lens shading, ...).
     #[arg(long)]
     no_opcodes: bool,
@@ -217,6 +220,7 @@ fn decode_options(a: &DecodeArgs) -> Result<DecodeOptions, String> {
         threads: a.threads,
         region: a.region,
         demosaic: Demosaic::parse(&a.demosaic).ok_or_else(|| format!("unknown demosaic {:?}", a.demosaic))?,
+        highlights: Highlights::parse(&a.highlights).ok_or_else(|| format!("unknown highlights {:?}", a.highlights))?,
         apply_opcodes: !a.no_opcodes,
         corruption_policy: policy(a.strict),
         exposure: a.exposure,
