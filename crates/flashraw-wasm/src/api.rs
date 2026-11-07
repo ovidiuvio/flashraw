@@ -220,7 +220,12 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
         o.demosaic = match d.to_ascii_lowercase().as_str() {
             "bilinear" => Demosaic::Bilinear,
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
-            _ => return Err(ApiError::invalid(format!("unknown demosaic {d:?} (expected bilinear or half-size)"))),
+            "edge-aware" | "edgeaware" | "edge_aware" => Demosaic::EdgeAware,
+            _ => {
+                return Err(ApiError::invalid(format!(
+                    "unknown demosaic {d:?} (expected bilinear, half-size or edge-aware)"
+                )));
+            }
         };
     }
     match v.get("crop") {

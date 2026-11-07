@@ -175,6 +175,7 @@ enum class output_format : std::int32_t {
 enum class demosaic : std::int32_t {
     bilinear = FLASHRAW_DEMOSAIC_BILINEAR,
     half_size = FLASHRAW_DEMOSAIC_HALF_SIZE,
+    edge_aware = FLASHRAW_DEMOSAIC_EDGE_AWARE,
 };
 
 enum class corruption_policy : std::int32_t {

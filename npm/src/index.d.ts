@@ -519,8 +519,12 @@ export interface DecodeOptions {
   fallback?: 'cpu' | 'error';
   /** Default `raw-u16`. `gpu-*` outputs stay on the GPU (WebGPU build). */
   output?: OutputFormat | GpuOutputFormat;
-  /** Demosaic for RGB outputs. `half-size` = 2x2 binning (fast). Default `bilinear`. */
-  demosaic?: 'bilinear' | 'half-size';
+  /**
+   * Demosaic for RGB outputs. `half-size` = 2x2 binning (fast); `edge-aware` = directionally
+   * weighted filters for Bayer and X-Trans sensors (much cleaner, several times slower, CPU
+   * only: the WebGPU build falls back to the CPU for it). Default `bilinear`.
+   */
+  demosaic?: 'bilinear' | 'half-size' | 'edge-aware';
   /**
    * RGB outputs: crop to the default crop (default true). Raw outputs (`raw-u16`, `raw-f32`,
    * `normalized`) are never cropped by `true`; `'active'` crops them to `frameInfo.activeArea`

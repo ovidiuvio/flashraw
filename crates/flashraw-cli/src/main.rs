@@ -37,7 +37,7 @@ struct DecodeArgs {
     /// Worker threads (default: all cores).
     #[arg(long)]
     threads: Option<usize>,
-    /// Demosaic for RGB outputs: bilinear, half.
+    /// Demosaic for RGB outputs: bilinear, half, edge-aware.
     #[arg(long, default_value = "bilinear")]
     demosaic: String,
     /// Do not apply DNG opcode lists (bad pixels, lens shading, ...).
@@ -216,7 +216,7 @@ fn decode_options(a: &DecodeArgs) -> Result<DecodeOptions, String> {
         output: OutputFormat::parse(&a.output).ok_or_else(|| format!("unknown output {:?}", a.output))?,
         threads: a.threads,
         region: a.region,
-        demosaic: if a.demosaic.starts_with("half") { Demosaic::HalfSize } else { Demosaic::Bilinear },
+        demosaic: Demosaic::parse(&a.demosaic).ok_or_else(|| format!("unknown demosaic {:?}", a.demosaic))?,
         apply_opcodes: !a.no_opcodes,
         corruption_policy: policy(a.strict),
         exposure: a.exposure,

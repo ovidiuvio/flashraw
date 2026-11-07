@@ -74,7 +74,7 @@ Outputs (`output=`, the first argument of `decode` / `imread`):
 | `rgb16` | uint16 `(h, w, 3)` | display-ready sRGB at 16 bits, orientation applied |
 
 Options of `decode`: `backend` (`"auto"`, `"cpu"`, `"simd"`, `"gpu"`), `threads`, `region`, `crop`
-(`True`, or `"active"` for raw outputs), `demosaic` (`"bilinear"`, `"half-size"`), `apply_opcodes`,
+(`True`, or `"active"` for raw outputs), `demosaic` (`"bilinear"`, `"half-size"`, `"edge-aware"`), `apply_opcodes`,
 `corruption_policy` (`"recover"`, `"strict"`), `exposure`, `black_point`, `white_point`,
 `preview_fallback` (RGB outputs of undecodable sensor data return the embedded full-size
 preview, `frame.source == "preview"`), `color_space` (`"srgb"`, `"display-p3"`, `"adobe-rgb"`,

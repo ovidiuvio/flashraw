@@ -323,8 +323,9 @@ impl RawFile {
         }
         let be = Backend::parse(backend)
             .ok_or_else(|| invalid(py, format!("unknown backend {backend:?} (expected auto, cpu, simd or gpu)")))?;
-        let dm = Demosaic::parse(demosaic)
-            .ok_or_else(|| invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear or half-size)")))?;
+        let dm = Demosaic::parse(demosaic).ok_or_else(|| {
+            invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size or edge-aware)"))
+        })?;
         let policy = CorruptionPolicy::parse(corruption_policy).ok_or_else(|| {
             invalid(py, format!("unknown `corruption_policy` {corruption_policy:?} (expected recover or strict)"))
         })?;
