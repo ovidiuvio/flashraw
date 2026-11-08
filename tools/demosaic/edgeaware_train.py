@@ -7,7 +7,8 @@ colour filter array (2x2 Bayer, 6x6 X-Trans). For every pixel
   2. the squared gradients of sqrt(G0) along four directions (horizontal, vertical and the
      two diagonals), summed over 3x3, give four weights w_d = 1 / (E_d + EPS)^2 (normalised),
   3. each missing colour is sum_d w_d * (7x7 filter_d applied to the mosaic),
-  4. R-G and B-G are replaced by their 3x3 median (measured samples kept; not trained, see `chroma_median`).
+  4. Bayer: missing R and B = G + luminance-gated mean of the measured R-G / B-G in the 3x3 window; X-Trans: R-G and B-G
+     replaced by their 3x3 median; measured samples kept (not trained, see `chroma_stage`).
 The filters are the least-squares solution (ridge regularised) that reconstructs ground truth
 images from their re-mosaicked version, with the weights held fixed, so everything stays one
 linear problem. No third-party code or tables are involved: the training images are
@@ -153,7 +154,7 @@ def train_pattern(images, pat, noises=NOISES):
     return iso, dirc, feat
 
 def chroma_median(o, cm):
-    """Step 4: 3x3 median of the colour differences R-G and B-G (measured samples are kept)."""
+    """X-Trans step 4: 3x3 median of the colour differences R-G and B-G (measured samples are kept)."""
     G = o[..., 1]
     H, W = G.shape
     def med(a):
@@ -162,6 +163,30 @@ def chroma_median(o, cm):
     r = np.where(cm == 0, o[..., 0], G + med(o[..., 0] - G))
     b = np.where(cm == 2, o[..., 2], G + med(o[..., 2] - G))
     return np.stack([r, G, b], -1)
+
+def chroma_gated(o, cm):
+    """Bayer step 4: each missing R or B is G plus the mean of the measured differences (R-G or B-G) at the R or B
+    sites of the 3x3 window, a site weighing exp(-((G_site - G) / s)^2) with s = 0.3 G + 0.02. Mirrors Rust."""
+    G = o[..., 1]
+    H, W = G.shape
+    pg = np.pad(G, 1, mode='edge')
+    c = G; s = 0.3 * np.maximum(c, 0) + 0.02
+    out = [o[..., 0], G, o[..., 2]]
+    for ch in (0, 2):
+        site = (cm == ch)
+        pd = np.pad(np.where(site, o[..., ch] - G, 0.0), 1, mode='edge')
+        ps = np.pad(site.astype(np.float32), 1, mode='edge')
+        sw = sd = 0.0
+        for dy in range(3):
+            for dx in range(3):
+                gs = pg[dy:dy + H, dx:dx + W]
+                w = ps[dy:dy + H, dx:dx + W] * np.exp(-(((gs - c) / s) ** 2))
+                sw = sw + w; sd = sd + w * pd[dy:dy + H, dx:dx + W]
+        out[ch] = np.where(site, o[..., ch], G + sd / np.maximum(sw, 1e-12))
+    return np.stack(out, -1)
+
+def chroma_stage(o, cm, pat):
+    return chroma_gated(o, cm) if pat.shape[0] == 2 else chroma_median(o, cm)
 
 def blob(pat, iso, dirc):
     P = pat.shape[0]
@@ -279,7 +304,7 @@ def cmd_eval(a):
                 m, cm = mosaic(g, pat)
                 m = noisy(m, level, 1000 + n)
                 b = bilinear3(m, cm)
-                o = chroma_median(apply(m, cm, pat, dirc, feat(m, cm)), cm)
+                o = chroma_stage(apply(m, cm, pat, dirc, feat(m, cm)), cm, pat)
                 base.append((psnr(b, g), psnr(b, g, True))); new.append((psnr(o, g), psnr(o, g, True)))
             print(name, tag, 'bilinear3', np.mean(base, 0).round(2), 'edge-aware', np.mean(new, 0).round(2), flush=True)
 

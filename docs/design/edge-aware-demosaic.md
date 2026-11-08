@@ -27,12 +27,14 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
 3. **Interpolation.** Each missing colour is `sum_d w_d * (F_d * mosaic)`, where `F_d` is a 7x7 filter chosen by
    CFA position (4 for Bayer, 36 for X-Trans), colour and direction. The measured colour is kept as is. Every
    filter sums to one, so a flat field stays flat.
-4. **False-colour suppression.** For the two interpolated colours of each pixel, `R - G` and `B - G` are replaced
-   by their 3x3 median (the usual colour-difference median of classical demosaics). Isolated coloured dots go;
-   green (luminance) detail and the measured samples are untouched. This costs some colour resolution at fine
-   saturated edges.
+4. **False-colour suppression.** Isolated coloured dots go; green (luminance) detail and the measured samples are
+   untouched. Bayer: each missing red or blue is the green plus the weighted mean of the differences `R - G`
+   (or `B - G`) measured at the red (blue) sites of the 3x3 window, a site weighing `exp(-((G_site - G) / s)^2)`
+   with `s = 0.3 G + 0.02` (on the white-balanced, normalised mosaic), so that colour does not leak across a
+   luminance edge. X-Trans: `R - G` and `B - G` are replaced by their 3x3 median (the usual colour-difference
+   median of classical demosaics). Both cost some colour resolution at fine saturated edges.
 
-Support is 6 pixels around each output pixel (3 for the filter, 2 for the weights' gradients, 1 for the median).
+Support is 6 pixels around each output pixel (3 for the filter, 2 for the weights' gradients, 1 for the chroma stage).
 The develop runs in bands of 32 output rows plus that halo, so memory stays bounded for any size (a few MB per
 thread), and every pixel is computed by the same operations in the same order whatever the band, thread count,
 crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). Pixels
@@ -44,8 +46,8 @@ A 4-wide `f32` accumulate over contiguous per-phase planes keeps the cost to a f
 |---|---|---|
 | 39.8 MP X-Trans, 1 thread | 0.94 s | 3.5 s |
 | 39.8 MP X-Trans, 16 threads | 0.11 s | 0.59 s |
-| 21.3 MP Bayer, 1 thread | 0.28 s | 1.3 s |
-| 21.3 MP Bayer, 16 threads | 0.05 s | 0.29 s |
+| 18 MP Bayer, 1 thread | 0.12 s | 1.1 s |
+| 18 MP Bayer, 16 threads | 0.02 s | 0.21 s |
 
 ## Where the filters come from
 
@@ -78,7 +80,7 @@ average (bilinear for Bayer is slightly different, see the table note):
 | | clean mosaic | noisy mosaic |
 |---|---|---|
 | Bayer: 3x3 average | 37.05 / 31.34 | 34.22 / 29.53 |
-| Bayer: edge-aware | 37.19 / 31.75 | 33.72 / 29.45 |
+| Bayer: edge-aware | 37.01 / 31.65 | 33.49 / 29.26 |
 | X-Trans: 3x3 average | 36.23 / 30.28 | 33.63 / 28.74 |
 | X-Trans: edge-aware | 37.20 / 31.72 | 33.67 / 29.39 |
 
@@ -92,7 +94,7 @@ issue (mean Laplacian of R-G and B-G over the Laplacian of luma, of the sRGB-enc
 
 * CPU only; several times slower than bilinear (table above).
 * Hard saturated colour edges (pure red against green) lose a little sharpness in the colour channels because of
-  the median; bilinear does not.
+  the chroma stage; bilinear does not.
 * The weights assume a roughly neutral scene after white balance (the training data is white balanced); strongly
   coloured light sources still decode correctly but the direction estimate is less reliable.
 * Highlight handling is not part of it: clipped samples are clamped to white as in every other mode.

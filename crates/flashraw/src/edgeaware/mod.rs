@@ -16,10 +16,12 @@
 //! `docs/design/edge-aware-demosaic.md` for the method and its provenance) and stored in
 //! `bayer.bin` / `xtrans.bin`.
 //!
-//! 4. the colour differences R-G and B-G are replaced by their 3x3 median (the usual
-//!    false-colour suppression of colour-difference demosaics): isolated coloured dots, the
-//!    main artefact of sparse red and blue sites, disappear and green (luminance) detail is
-//!    untouched.
+//! 4. the colour differences R-G and B-G are cleaned, so that isolated coloured dots (the
+//!    main artefact of sparse red and blue sites) disappear and green (luminance) detail is
+//!    untouched. X-Trans: their 3x3 median. Bayer: each missing red or blue is the green
+//!    plus the weighted mean of the differences measured at the red or blue sites of the 3x3
+//!    window, a site counting `exp(-((G_site - G) / s)^2)` with `s = 0.3 G + 0.02`, so that
+//!    colour does not leak across a luminance edge.
 //!
 //! The mosaic is white balanced before the filters see it, so the colour channels have
 //! comparable levels (as in the training data).
@@ -160,10 +162,48 @@ impl Plan {
         let mut mr = vec![0f32; nc];
         let mut mb = vec![0f32; nc];
         for i in 0..nr {
-            median_row(&rg, ec, i, &mut mr);
-            median_row(&bg, ec, i, &mut mb);
             let cr = (y0 + i + self.cy) % p;
             let o = &mut out[i * nc..(i + 1) * nc];
+            if p == 2 {
+                // Bayer: gated colour-difference interpolation over the 3x3 window.
+                let crow = [(cr + p - 1) % p, cr, (cr + 1) % p];
+                for (j, px) in o.iter_mut().enumerate() {
+                    let c = (i + 1) * ec + j + 1;
+                    let own = t.canon[cr * p + (xa + j + self.cx) % p] as usize;
+                    let gc = g[c];
+                    let inv = 1.0 / (0.3 * gc.max(0.0) + 0.02);
+                    let mut v = [r[c], gc, bl[c]];
+                    for ch in [0usize, 2] {
+                        if own == ch {
+                            continue;
+                        }
+                        let plane = if ch == 0 { r } else { bl };
+                        let (mut sw, mut sd, mut su, mut n) = (0f32, 0f32, 0f32, 0f32);
+                        for (dy, &rc) in crow.iter().enumerate() {
+                            for dx in 0..3 {
+                                if t.canon[rc * p + (xa + j + dx + self.cx + p - 1) % p] as usize != ch {
+                                    continue;
+                                }
+                                let k = (i + dy) * ec + j + dx;
+                                let d = plane[k] - g[k];
+                                let e = (g[k] - gc) * inv;
+                                let w = (-e * e).exp();
+                                sw += w;
+                                sd += w * d;
+                                su += d;
+                                n += 1.0;
+                            }
+                        }
+                        // Every 3x3 window holds at least two sites of each colour; the
+                        // plain mean is the fallback when every weight underflows.
+                        v[ch] = gc + if sw > 1e-12 { sd / sw } else { su / n };
+                    }
+                    *px = v;
+                }
+                continue;
+            }
+            median_row(&rg, ec, i, &mut mr);
+            median_row(&bg, ec, i, &mut mb);
             for (j, px) in o.iter_mut().enumerate() {
                 let c = (i + 1) * ec + j + 1;
                 let own = t.canon[cr * p + (xa + j + self.cx) % p];
