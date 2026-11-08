@@ -539,6 +539,12 @@ export interface DecodeOptions {
    */
   whiteBalance?: 'as-shot' | 'auto';
   /**
+   * Correct the lateral chromatic aberration of Bayer frames (RGB outputs): the radial scale of
+   * the red and blue planes against green is estimated from the frame and corrected before
+   * demosaicing. CPU only (the WebGPU build falls back to the CPU for it). Default `false`.
+   */
+  chromaticAberration?: boolean;
+  /**
    * RGB outputs: crop to the default crop (default true). Raw outputs (`raw-u16`, `raw-f32`,
    * `normalized`) are never cropped by `true`; `'active'` crops them to `frameInfo.activeArea`
    * (like `region: activeArea`): `origin` reports the buffer position, `cfa` is anchored at

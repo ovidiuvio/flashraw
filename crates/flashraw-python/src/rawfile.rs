@@ -392,6 +392,7 @@ impl RawFile {
             demosaic: dm,
             highlights: hl,
             white_balance: wbm,
+            chromatic_aberration: false,
             apply_opcodes,
             limits,
             corruption_policy: policy,
@@ -584,7 +585,7 @@ impl RawFile {
         apply_opcodes=true, corruption_policy="recover", tile=None, exposure=0.0, black_point=0.0,
         white_point=1.0, preview_fallback=false, color_space="srgb", output_profile=None,
         intent="perceptual", black_point_compensation=false, highlights="clip", white_balance="as-shot",
-        camera_profile=None, camera_profile_embedded=false
+        camera_profile=None, camera_profile_embedded=false, chromatic_aberration=false
     ))]
     #[allow(clippy::too_many_arguments)]
     fn decode<'py>(
@@ -611,6 +612,7 @@ impl RawFile {
         white_balance: &str,
         camera_profile: Option<&[u8]>,
         camera_profile_embedded: bool,
+        chromatic_aberration: bool,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
         if camera_profile.is_some() && camera_profile_embedded {
             return Err(invalid(py, "`camera_profile` is either a profile or \"embedded\", not both"));
@@ -634,6 +636,7 @@ impl RawFile {
             return Err(invalid(py, "`tile` and `region` cannot be combined"));
         }
         req.tile = tile;
+        req.opts.chromatic_aberration = chromatic_aberration;
         req.embedded_profile = camera_profile_embedded;
         if let Some(bytes) = camera_profile {
             req.opts.camera_profile = Some(flashraw::CameraProfile::from_dcp(bytes).map_err(|e| to_pyerr(py, e))?);

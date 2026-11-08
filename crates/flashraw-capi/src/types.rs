@@ -479,8 +479,9 @@ pub struct flashraw_decode_options {
     /// `flashraw_white_balance` of the RGB outputs. Default `FLASHRAW_WHITE_BALANCE_AS_SHOT` (0;
     /// absent from callers built against an older header).
     pub white_balance: i32,
-    /// Reserved, zero.
-    pub reserved: i32,
+    /// Non-zero: correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU
+    /// only). Default 0 (this field was reserved and zero before).
+    pub chromatic_aberration: i32,
     /// DNG camera profile (`.dcp` file contents) to render the RGB outputs with (NULL: none).
     /// Replaces the file's colour matrices and applies the profile's hue/sat map, look table
     /// and tone curve. CPU only (the GPU backend decodes on the CPU for it). Read during

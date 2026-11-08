@@ -514,6 +514,7 @@ class RawFile:
         black_point_compensation: bool = False,
         highlights: str = "clip",
         white_balance: str = "as-shot",
+        chromatic_aberration: bool = False,
         camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
     ) -> Frame:
         """Decode the sensor data. The GIL is released while decoding.
@@ -565,6 +566,8 @@ class RawFile:
                 saturation to white instead of leaving a colour cast) or ``"blend"`` (the same,
                 and pixels above white after white balance keep their colour) or ``"reconstruct"``
                 (also rebuild clipped channels from a model fitted on the frame) (CPU only).
+            chromatic_aberration: correct the lateral chromatic aberration of Bayer frames (RGB
+                outputs; CPU only).
             white_balance: ``"as-shot"`` (default, the camera's balance) or ``"auto"`` (refine the camera's
                 balance over the near-neutral areas; CPU only).
             camera_profile: RGB outputs: render with a DNG camera profile: the bytes of a
@@ -598,6 +601,7 @@ class RawFile:
             white_balance,
             profile,
             embedded,
+            chromatic_aberration,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -624,6 +628,7 @@ class RawFile:
         black_point_compensation: bool = False,
         highlights: str = "clip",
         white_balance: str = "as-shot",
+        chromatic_aberration: bool = False,
         camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
     ) -> Frame:
         """Decode one independently decodable tile/strip (see :attr:`tiles`)."""
@@ -651,6 +656,7 @@ class RawFile:
             white_balance,
             profile,
             embedded,
+            chromatic_aberration,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 

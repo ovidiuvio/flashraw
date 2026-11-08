@@ -979,9 +979,10 @@ typedef struct flashraw_decode_options {
      */
     int32_t white_balance;
     /**
-     * Reserved, zero.
+     * Non-zero: correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU
+     * only). Default 0 (this field was reserved and zero before).
      */
-    int32_t reserved;
+    int32_t chromatic_aberration;
     /**
      * DNG camera profile (`.dcp` file contents) to render the RGB outputs with (NULL: none).
      * Replaces the file's colour matrices and applies the profile's hue/sat map, look table

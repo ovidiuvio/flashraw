@@ -28,6 +28,10 @@
   `flashraw_decode_options.highlights`): pixels with a channel at or near sensor saturation fade smoothly to
   white instead of keeping the colour cast of a partly clipped pixel (magenta, yellow). `Clip`, the old
   behaviour, stays the default. CPU only (the GPU backend decodes on the CPU for it).
+- `DecodeOptions::chromatic_aberration` (`--chromatic-aberration`, `chromatic_aberration=True`, `chromaticAberration: true`, `flashraw_decode_options.chromatic_aberration`):
+  corrects the lateral chromatic aberration of 16-bit Bayer frames. The radial scale of the red and blue planes against green is
+  estimated from the frame (tile-wise correlation of the Laplacians of half-resolution planes, robust fit) and the red and blue
+  samples are resampled before demosaicing; frames without enough edges, X-Trans and other sensors are left as they are. CPU only.
 - `Highlights::Reconstruct` (`--highlights reconstruct`, `"reconstruct"`, `FLASHRAW_HIGHLIGHTS_RECONSTRUCT`): as `Blend`, and clipped channels are
   rebuilt from the unclipped ones with a model fitted on the unclipped 6x6 blocks of the frame; only pixels clipped in every
   channel fade to white. Works when the highlights resemble the rest of the scene; frames it cannot fit behave as `Blend`.

@@ -474,6 +474,9 @@ impl<'a> FlashRaw<'a> {
                 let mut params = setup.apply(process::DevelopParams::new(&frame_info_for_post, opts.demosaic, crop));
                 params.levels = levels;
                 params.highlights = opts.highlights;
+                if opts.chromatic_aberration {
+                    ca::correct_image(&mut img, &frame_info_for_post, origin);
+                }
                 if opts.white_balance == WhiteBalanceMode::Auto {
                     if let Some(wb) = process::auto_white_balance(&img, &frame_info_for_post, origin, params.wb) {
                         params.wb = wb;

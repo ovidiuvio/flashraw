@@ -314,6 +314,8 @@ struct decode_options {
     flashraw::demosaic demosaic = flashraw::demosaic::bilinear;
     flashraw::highlights highlights = flashraw::highlights::clip;
     flashraw::white_balance white_balance = flashraw::white_balance::as_shot;
+    /// Correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU only).
+    bool chromatic_aberration = false;
     flashraw::corruption_policy corruption = flashraw::corruption_policy::recover;
     /// Worker threads (0 = all cores).
     unsigned threads = 0;
@@ -355,6 +357,7 @@ struct decode_options {
         o.demosaic = static_cast<std::int32_t>(demosaic);
         o.highlights = static_cast<std::int32_t>(highlights);
         o.white_balance = static_cast<std::int32_t>(white_balance);
+        o.chromatic_aberration = chromatic_aberration ? 1 : 0;
         o.corruption_policy = static_cast<std::int32_t>(corruption);
         o.threads = threads;
         o.crop = crop ? 1 : 0;

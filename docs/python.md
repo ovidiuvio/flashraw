@@ -132,6 +132,7 @@ frame = raw.decode(
     region=None,                 # Rect / (x, y, width, height) / dict, sensor coordinates
     crop=True,                   # RGB outputs: default crop; "active": raw outputs → active area
     demosaic="bilinear",         # or "half-size" (2x2 binning), "edge-aware" (Bayer/X-Trans, slower, cleaner)
+    chromatic_aberration=False,  # True: correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU only)
     white_balance="as-shot",     # or "auto": refine the camera's balance over the near-neutral areas (RGB outputs, CPU only)
     highlights="clip",           # or "neutral" (fade clipped pixels to white) "blend" (also keep the colour of pixels above white) or "reconstruct" (rebuild clipped channels from the frame's unclipped blocks); RGB outputs, CPU only
     apply_opcodes=True,          # DNG opcode lists (bad pixels, gain maps, ...)

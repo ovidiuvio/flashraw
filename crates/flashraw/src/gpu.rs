@@ -122,15 +122,17 @@ pub fn edge_spec(
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The highlight modes, the automatic white balance and camera profiles run on the CPU only.
+    // The highlight modes, the automatic white balance, the chromatic aberration correction and
+    // camera profiles run on the CPU only.
     if (opts.highlights != crate::Highlights::Clip
         || opts.white_balance != crate::WhiteBalanceMode::AsShot
+        || opts.chromatic_aberration
         || opts.camera_profile.is_some())
         && !matches!(base, OutputFormat::RawU16 | OutputFormat::NormalizedF32)
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with highlight modes, automatic white balance or a camera profile".into(),
+                "GPU-resident RGB output with highlight modes, automatic white balance, chromatic aberration correction or a camera profile".into(),
             ));
         }
         return Ok(None);

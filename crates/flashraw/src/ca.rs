@@ -10,8 +10,6 @@
 //! `1 + k`. The translation `t` also holds the constant offset between the sample positions of
 //! the colours inside a cell, which is geometry and not corrected.
 
-#![allow(dead_code)]
-
 const TILE: usize = 32;
 const RANGE: i32 = 3;
 
@@ -92,8 +90,8 @@ fn tile_shift(lc: &[f32], lg: &[f32], w: usize, x0: usize, y0: usize) -> Option<
             egg += v * v;
         }
     }
-    // Tiles with fewer edges than noise (rms Laplacian below 0.025) say nothing.
-    if egg < 6e-4 * (TILE * TILE) as f32 {
+    // Tiles with fewer edges than noise (rms Laplacian below 0.012) say nothing.
+    if egg < 1.5e-4 * (TILE * TILE) as f32 {
         return None;
     }
     for (k, c) in ncc.iter_mut().enumerate() {
@@ -113,7 +111,7 @@ fn tile_shift(lc: &[f32], lg: &[f32], w: usize, x0: usize, y0: usize) -> Option<
         }
     }
     let (bk, (bx, by)) = (best.0, (best.1 % n, best.1 / n));
-    if bk < 0.6 || bx == 0 || by == 0 || bx == n - 1 || by == n - 1 {
+    if bk < 0.35 || bx == 0 || by == 0 || bx == n - 1 || by == n - 1 {
         return None;
     }
     // Sub-pixel peak: parabola through the three correlations along each axis.
@@ -239,6 +237,40 @@ pub(crate) fn correct(m: &mut [f32], w: usize, h: usize, rpos: (usize, usize), m
     let src = m.to_vec();
     resample(m, &src, w, h, rpos, model.red);
     resample(m, &src, w, h, (1 - rpos.0, 1 - rpos.1), model.blue);
+}
+
+/// Correct the lateral chromatic aberration of a Bayer frame in place: the scale factors are
+/// estimated from the frame and the red and blue samples are resampled. `origin` is the sensor
+/// position of the frame's first sample. Does nothing (and returns `false`) for anything but a
+/// single-component 16-bit three-colour Bayer mosaic with enough edges.
+pub(crate) fn correct_image(
+    img: &mut flashraw_core::RawImage,
+    info: &flashraw_core::FrameInfo,
+    origin: (u32, u32),
+) -> bool {
+    use flashraw_core::{CfaColor, PixelData};
+    let Some(cfa) = info.cfa else { return false };
+    let (w, h) = (img.width as usize, img.height as usize);
+    if img.cpp != 1 || cfa.width() != 2 || cfa.height() != 2 || !matches!(img.data, PixelData::U16(_)) {
+        return false;
+    }
+    let at = |x: usize, y: usize| cfa.color_at(x + origin.0 as usize, y + origin.1 as usize);
+    let Some(rpos) = (0..4).map(|k| (k % 2, k / 2)).find(|&(x, y)| at(x, y) == CfaColor::Red) else {
+        return false;
+    };
+    let (bx, by) = (1 - rpos.0, 1 - rpos.1);
+    if at(bx, by) != CfaColor::Blue || at(bx, rpos.1) != CfaColor::Green || at(rpos.0, by) != CfaColor::Green {
+        return false;
+    }
+    let white = info.white_level.max().max(1) as f32;
+    let mut m: Vec<f32> = img.u16().iter().map(|&v| v as f32).collect();
+    let scaled: Vec<f32> = m.iter().map(|v| v / white).collect();
+    let Some(model) = estimate(&scaled, w, h, rpos) else { return false };
+    correct(&mut m, w, h, rpos, model);
+    for (d, v) in img.u16_mut().iter_mut().zip(&m) {
+        *d = v.round().clamp(0.0, 65535.0) as u16;
+    }
+    true
 }
 
 #[cfg(test)]
@@ -368,5 +400,28 @@ mod tests {
         let mut same = aberrated.clone();
         correct(&mut same, w, h, (0, 0), CaModel { red: 1.0, blue: 1.0 });
         assert!(same.iter().zip(&aberrated).all(|(a, b)| (a - b).abs() < 1e-6));
+    }
+
+    #[test]
+    fn correct_image_handles_bayer_frames_and_leaves_other_frames_alone() {
+        use flashraw_core::{CfaPattern, FrameInfo, Limits, RawImage, WhiteLevel};
+        let (w, h) = (640usize, 480usize);
+        let m = mosaic(&render(w, h, [1.004, 1.0, 0.996]), w, h);
+        let mut img = RawImage::new_u16(w as u32, h as u32, 1, &Limits::default()).unwrap();
+        for (d, v) in img.u16_mut().iter_mut().zip(&m) {
+            *d = (v * 4000.0).round() as u16;
+        }
+        let mut info = FrameInfo::new(w as u32, h as u32, 12);
+        info.cfa = Some(CfaPattern::RGGB);
+        info.white_level = WhiteLevel::uniform(4000);
+        let before = img.u16().to_vec();
+        assert!(correct_image(&mut img, &info, (0, 0)));
+        assert_ne!(img.u16(), &before[..]);
+        // The same data with a different origin has its red sites elsewhere and is handled too;
+        // a frame without a colour filter array is untouched.
+        info.cfa = None;
+        let again = img.u16().to_vec();
+        assert!(!correct_image(&mut img, &info, (0, 0)));
+        assert_eq!(img.u16(), &again[..]);
     }
 }

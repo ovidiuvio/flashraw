@@ -46,6 +46,9 @@ struct DecodeArgs {
     /// White balance of RGB outputs: as-shot, auto (refine the camera's over near-neutral areas).
     #[arg(long, default_value = "as-shot")]
     white_balance: String,
+    /// Correct the lateral chromatic aberration of Bayer frames (RGB outputs).
+    #[arg(long)]
+    chromatic_aberration: bool,
     /// Do not apply DNG opcode lists (bad pixels, lens shading, ...).
     #[arg(long)]
     no_opcodes: bool,
@@ -246,6 +249,7 @@ fn decode_options(a: &DecodeArgs, raw: Option<&FlashRaw<'_>>) -> Result<DecodeOp
         highlights: Highlights::parse(&a.highlights).ok_or_else(|| format!("unknown highlights {:?}", a.highlights))?,
         white_balance: WhiteBalanceMode::parse(&a.white_balance)
             .ok_or_else(|| format!("unknown white balance {:?}", a.white_balance))?,
+        chromatic_aberration: a.chromatic_aberration,
         apply_opcodes: !a.no_opcodes,
         corruption_policy: policy(a.strict),
         exposure: a.exposure,

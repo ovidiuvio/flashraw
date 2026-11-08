@@ -297,6 +297,12 @@ pub struct DecodeOptions {
     pub highlights: Highlights,
     /// White balance of RGB outputs. Default: [`WhiteBalanceMode::AsShot`].
     pub white_balance: WhiteBalanceMode,
+    /// Correct the lateral chromatic aberration of Bayer frames (16-bit, three colours) before
+    /// demosaicing: radial scale factors of the red and blue planes against green are estimated
+    /// from the frame and the red and blue samples resampled. Frames without enough edges, and
+    /// other sensors, are left as they are. Applies to the RGB outputs; CPU only (the GPU backend
+    /// decodes on the CPU for it). Default: false.
+    pub chromatic_aberration: bool,
     /// Apply DNG opcode lists (bad pixels, lens-shading gain maps, ...) in their
     /// specified stages. Geometric opcodes are never applied. Default: true.
     pub apply_opcodes: bool,
@@ -375,6 +381,7 @@ impl Default for DecodeOptions {
             demosaic: Demosaic::Bilinear,
             highlights: Highlights::Clip,
             white_balance: WhiteBalanceMode::AsShot,
+            chromatic_aberration: false,
             apply_opcodes: true,
             limits: Limits::default(),
             corruption_policy: CorruptionPolicy::Recover,
