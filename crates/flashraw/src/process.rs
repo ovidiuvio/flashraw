@@ -909,7 +909,7 @@ fn kernel_with<'a>(
             neigh.push(lists);
         }
     }
-    Kernel {
+    let mut k = Kernel {
         img,
         source,
         calibs: (0..cpp).map(|c| Calib::new(info, c)).collect(),
@@ -933,7 +933,18 @@ fn kernel_with<'a>(
             _ => None,
         },
         dm_wb: params.dm_wb,
+    };
+    if let Some(mut plan) = k.edge.take() {
+        let (w, h, g) = (img.width as usize, img.height as usize, k.dm_wb[1]);
+        let kr = &k;
+        let mut fetch = |y: usize, row: &mut [f32]| match kr.source {
+            Some(f) => f(y, row),
+            None => kr.normalize_row(y, row),
+        };
+        plan.set_noise_from(w, h, g, &mut fetch);
+        k.edge = Some(plan);
     }
+    k
 }
 
 fn origin_usize(o: (u32, u32)) -> (usize, usize) {

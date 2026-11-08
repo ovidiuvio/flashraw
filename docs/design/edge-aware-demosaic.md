@@ -39,11 +39,20 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    photo edge PSNR (it discards the filters' own estimate); the second pass over all pixels gets 1.98 and brings
    the PSNR back, 0.8 dB above the median on synthetic edges.
 
-Support is 7 pixels around each output pixel on Bayer (3 for the filter, 2 for the weights' gradients, 2 for the two chroma passes; 6 on X-Trans, whose median is one pass).
+5. **Noise smoothing (Bayer).** On noisy frames every channel of a pixel moves by `beta` towards the mean of its 3x3
+   window, a neighbour weighing `1 / (1 + e^2)` with `e = (G_neighbour - G) / (0.2 G + 0.015)`. `beta` comes from a
+   noise estimate over 48 rows spread over the whole frame (so it does not depend on the crop): the lower quintile of
+   `|a - b| / sqrt((a + b) / 2)` over same-colour green pairs two samples apart gives a noise coefficient `nu`, and
+   `beta = 0.5 * clamp((nu - 2e-4) / 6e-4, 0, 1)`: 0 on clean frames, 0.5 at the noise of the 'moderate' training level
+   and above. The filters keep the measured sample, so on a noisy mosaic they lose to the 3x3 average; the smoothing
+   recovers that (on the tiles: +0.6 dB at moderate and +1.1 dB at high noise over bilinear, nothing on clean
+   frames). X-Trans has no smoothing step yet.
+
+Support is 8 pixels around each output pixel on Bayer (3 for the filter, 2 for the weights' gradients, 2 for the chroma passes, 1 for the smoothing; 6 on X-Trans, whose median is one pass).
 The develop runs in bands of 32 output rows plus that halo, so memory stays bounded for any size (a few MB per
 thread), and every pixel is computed by the same operations in the same order whatever the band, thread count,
 crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). Pixels
-closer than 7 samples to the frame border use bilinear.
+closer than 8 samples to the frame border use bilinear.
 
 A 4-wide `f32` accumulate over contiguous per-phase planes keeps the cost to a few times bilinear:
 

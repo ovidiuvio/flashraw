@@ -23,6 +23,11 @@
 //!    of the 3x3 window, a site counting `1 / (1 + ((G_site - G) / s)^2)` with
 //!    `s = 0.2 G + 0.015`, so that colour does not leak across a luminance edge; then the
 //!    same over the differences of all pixels of the 3x3 window with `s = 0.1 G + 0.007`.
+//! 5. Bayer only, on noisy frames: every channel of the pixel moves by `beta` towards the
+//!    mean of its 3x3 window, weighted as in step 4 with `s = 0.2 G + 0.015`. `beta` is 0 for
+//!    clean frames and up to 0.5 for noisy ones, from a noise estimate over 48 rows of the
+//!    whole frame ([`Plan::set_noise_from`]): the lower quintile of
+//!    `|a - b| / sqrt((a + b) / 2)` over same-colour green pairs two samples apart.
 //!
 //! The mosaic is white balanced before the filters see it, so the colour channels have
 //! comparable levels (as in the training data).
@@ -43,9 +48,9 @@ const EPS: f32 = 1e-3;
 /// Mosaic samples needed around a pixel by the filters: the 7x7 filter reaches 3, and the
 /// weights need `G0` two pixels further (gradient, then 3x3 sum) which itself reaches 3.
 const CORE_HALO: usize = R + 2;
-/// Mosaic samples needed around a pixel: the filters, plus two for the Bayer chroma stage
-/// (X-Trans needs one, for its median).
-pub(crate) const HALO: usize = CORE_HALO + 2;
+/// Mosaic samples needed around a pixel: the filters, plus three on Bayer (two chroma passes
+/// and the noise smoothing; X-Trans needs one, for its median).
+pub(crate) const HALO: usize = CORE_HALO + 3;
 /// Output rows per band: bounds the working memory (a few MB at 8000 columns).
 pub(crate) const BAND_ROWS: usize = 32;
 
@@ -97,6 +102,8 @@ pub(crate) struct Plan {
     /// Canonical column / row of frame column / row 0.
     cx: usize,
     cy: usize,
+    /// Weight of the gated smoothing of the output (Bayer), from the noise of the frame.
+    beta: f32,
     /// `shifts[q][tx]` = (phase of the tap's column, offset of its index in that phase's plane).
     shifts: Vec<[(usize, isize); K]>,
 }
@@ -128,7 +135,7 @@ impl Plan {
                                 })
                             })
                             .collect();
-                        return Some(Plan { t, cx, cy, shifts });
+                        return Some(Plan { t, cx, cy, beta: 0.0, shifts });
                     }
                 }
             }
@@ -179,8 +186,45 @@ impl Plan {
         }
     }
 
-    /// Bayer: the filters, then the two-pass luminance-gated chroma stage (module docs, step 4).
-    /// Same contract as [`Plan::develop`].
+    /// Estimate the noise of a Bayer frame of `w` x `h` samples and set the weight of the
+    /// smoothing pass (module docs, step 5) from it. Deterministic and independent of any
+    /// crop: 48 rows spread over the whole frame, so call it with the full frame's `fetch`.
+    pub(crate) fn set_noise_from(&mut self, w: usize, h: usize, g_gain: f32, fetch: &mut dyn FnMut(usize, &mut [f32])) {
+        self.beta = 0.0;
+        if self.t.period != 2 || h < 16 || w < 16 {
+            return;
+        }
+        const ROWS: usize = 48;
+        let mut row = vec![0f32; w];
+        let mut v: Vec<f32> = Vec::with_capacity(ROWS * w / 2);
+        for n in 0..ROWS {
+            let y = 4 + n * (h - 9) / (ROWS - 1);
+            fetch(y, &mut row);
+            for x in 0..w - 2 {
+                if self.t.canon[((y + self.cy) % 2) * 2 + (x + self.cx) % 2] != 1 {
+                    continue;
+                }
+                let (a, b) = (row[x] * g_gain, row[x + 2] * g_gain);
+                let mid = 0.5 * (a + b);
+                if mid > 0.03 && mid < 0.6 {
+                    v.push((a - b).abs() / mid.sqrt());
+                }
+            }
+        }
+        if v.len() < 1000 {
+            return;
+        }
+        // The lower quintile of |a - b| / sqrt(mean) comes from the flattest areas, where the
+        // difference of two samples of variance nu * mean has a half-normal distribution.
+        let k = v.len() / 5;
+        let q = *v.select_nth_unstable_by(k, |a, b| a.total_cmp(b)).1;
+        let sigma = q / (std::f32::consts::SQRT_2 * 0.2533);
+        let nu = sigma * sigma;
+        self.beta = 0.5 * ((nu - 2e-4) / 6e-4).clamp(0.0, 1.0);
+    }
+
+    /// Bayer: the filters, the two-pass luminance-gated chroma stage and, on a noisy frame, a
+    /// gated smoothing (module docs, steps 4 and 5). Same contract as [`Plan::develop`].
     fn develop_bayer(
         &self,
         w: usize,
@@ -192,18 +236,19 @@ impl Plan {
     ) {
         let t = self.t;
         let (nr, nc) = (y1 - y0, xb - xa);
-        // Two pixels more on every side: one for each 3x3 pass.
-        let (er, ec) = (nr + 4, nc + 4);
+        // `h` extra pixels around the core for the smoothing pass; two for the chroma passes.
+        let h = usize::from(self.beta > 0.0);
+        let m = 2 + h;
+        let (er, ec) = (nr + 2 * m, nc + 2 * m);
         let mut rgb: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0f32; er * ec]);
-        self.demosaic(w, (y0 - 2, y1 + 2), (xa - 2, xb + 2), wb, fetch, &mut rgb);
+        self.demosaic(w, (y0 - m, y1 + m), (xa - m, xb + m), wb, fetch, &mut rgb);
         let [r, g, bl] = &rgb;
-        // Channel at plane position (iy, ix): the plane starts two pixels before (y0, xa), so
-        // the parity of the position in the frame is that of (iy + y0, ix + xa).
-        let (py, px) = ((y0 + self.cy) % 2, (xa + self.cx) % 2);
+        // Channel at plane position (iy, ix): the plane starts `m` pixels before (y0, xa).
+        let (py, px) = ((y0 + self.cy + m) % 2, (xa + self.cx + m) % 2);
         let colour = |iy: usize, ix: usize| t.canon[((iy + py) % 2) * 2 + (ix + px) % 2] as usize;
-        // Pass 1, over the core plus one pixel: green plus the gated mean of the measured
+        // Pass 1, over the core plus `1 + h` pixels: green plus the gated mean of the measured
         // differences of the 3x3 window. `d1[ch / 2]` holds the colour difference (R-G, B-G).
-        let (e1r, e1c) = (nr + 2, nc + 2);
+        let (e1r, e1c) = (nr + 2 + 2 * h, nc + 2 + 2 * h);
         let mut d1 = [vec![0f32; e1r * e1c], vec![0f32; e1r * e1c]];
         for i in 0..e1r {
             for j in 0..e1c {
@@ -239,10 +284,12 @@ impl Plan {
                 }
             }
         }
-        // Pass 2, over the core: the same gate over the differences of every pixel (measured
-        // and pass-1 values), for the two colours the pixel does not measure.
-        for i in 0..nr {
-            for j in 0..nc {
+        // Pass 2, over the core plus `h` pixels: the same gate over the differences of every
+        // pixel (measured and pass-1 values), for the two colours the pixel does not measure.
+        let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
+        let mut v2 = vec![[0f32; 3]; e2r * e2c];
+        for i in 0..e2r {
+            for j in 0..e2c {
                 let c = (i + 2) * ec + j + 2;
                 let own = colour(i + 2, j + 2);
                 let gc = g[c];
@@ -263,7 +310,33 @@ impl Plan {
                     }
                     v[ch] = gc + sd / sw;
                 }
-                out[i * nc + j] = v;
+                v2[i * e2c + j] = v;
+            }
+        }
+        if h == 0 {
+            out.copy_from_slice(&v2);
+            return;
+        }
+        // Smoothing: the pixel moves by `beta` towards the mean of its 3x3 window, a neighbour
+        // weighing 1 / (1 + e^2) with e = (G_neighbour - G) / (0.2 G + 0.015).
+        let beta = self.beta;
+        for i in 0..nr {
+            for j in 0..nc {
+                let p = v2[(i + 1) * e2c + j + 1];
+                let inv = 1.0 / (0.2 * p[1].max(0.0) + 0.015);
+                let (mut sw, mut s) = (0f32, [0f32; 3]);
+                for dy in 0..3 {
+                    for dx in 0..3 {
+                        let q = v2[(i + dy) * e2c + j + dx];
+                        let e = (q[1] - p[1]) * inv;
+                        let wt = 1.0 / (1.0 + e * e);
+                        sw += wt;
+                        for c in 0..3 {
+                            s[c] += wt * q[c];
+                        }
+                    }
+                }
+                out[i * nc + j] = [0, 1, 2].map(|c| p[c] + beta * (s[c] / sw - p[c]));
             }
         }
     }
@@ -561,6 +634,67 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn smoothing_keeps_bands_and_crops_identical_and_flat_fields_flat() {
+        let (w, h) = (70, 53);
+        let mut s = 777u32;
+        let m: Vec<f32> = (0..w * h)
+            .map(|_| {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                (s >> 8) as f32 / (1u32 << 24) as f32
+            })
+            .collect();
+        let (_, cfa) = patterns().remove(0);
+        let mut plan = Plan::new(&cfa, &chan(), (0, 0)).unwrap();
+        plan.beta = 0.4;
+        let all = run(&plan, w, h, &m, (HALO, h - HALO), (HALO, w - HALO));
+        let nc = w - 2 * HALO;
+        let part = run(&plan, w, h, &m, (9, 20), (13, 41));
+        for (i, y) in (9..20).enumerate() {
+            for (j, x) in (13..41).enumerate() {
+                assert_eq!(part[i * 28 + j], all[(y - HALO) * nc + x - HALO], "({x},{y})");
+            }
+        }
+        let flat = vec![0.3f32; w * h];
+        for px in run(&plan, w, h, &flat, (HALO, h - HALO), (HALO, w - HALO)) {
+            for c in px {
+                assert!((c - 0.3).abs() < 1e-5, "{px:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn noise_estimate_separates_clean_from_noisy_frames() {
+        let (w, h) = (256, 256);
+        let (_, cfa) = patterns().remove(0);
+        let mut s = 99u32;
+        let mut gauss = || {
+            let mut u = || {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                ((s >> 8) as f32 + 0.5) / (1u32 << 24) as f32
+            };
+            (-2.0 * u().ln()).sqrt() * (std::f32::consts::TAU * u()).cos()
+        };
+        let beta_for = |sigma_rel: f32, gauss: &mut dyn FnMut() -> f32| {
+            // A smooth ramp with noise of variance sigma_rel^2 * value.
+            let m: Vec<f32> = (0..w * h)
+                .map(|i| {
+                    let v = 0.1 + 0.3 * ((i % w) as f32 / w as f32);
+                    v + gauss() * (sigma_rel * sigma_rel * v).sqrt()
+                })
+                .collect();
+            let mut plan = Plan::new(&cfa, &chan(), (0, 0)).unwrap();
+            let mut fetch = |yy: usize, row: &mut [f32]| row.copy_from_slice(&m[yy * w..(yy + 1) * w]);
+            plan.set_noise_from(w, h, 1.0, &mut fetch);
+            plan.beta
+        };
+        assert_eq!(beta_for(0.005, &mut gauss), 0.0);
+        let noisy = beta_for(0.03, &mut gauss);
+        assert!(noisy > 0.45 && noisy <= 0.5, "{noisy}");
+        let mid = beta_for(0.017, &mut gauss);
+        assert!(mid > 0.0 && mid < 0.5, "{mid}");
     }
 
     #[test]

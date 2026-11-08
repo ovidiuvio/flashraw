@@ -847,7 +847,7 @@ and the colour error). Noise is added to the mosaic before development (variance
 | Bayer, photographic tiles | clean | moderate noise | high noise |
 |---|---:|---:|---:|
 | FlashRaw bilinear | 42.43 / 39.24 | 37.03 / 35.55 | 33.30 / 32.41 |
-| **FlashRaw edge-aware** | 42.03 / 39.42 | 35.90 / 34.82 | 32.00 / 31.39 |
+| **FlashRaw edge-aware** | 42.04 / 39.43 | 37.67 / 36.16 | 34.40 / 33.40 |
 | LibRaw AHD | 41.53 / 38.91 | 34.95 / 33.99 | 30.93 / 30.42 |
 | LibRaw PPG | 41.54 / 38.99 | 35.04 / 34.06 | 31.04 / 30.50 |
 | LibRaw DCB | 41.82 / 39.30 | 35.36 / 34.40 | 31.36 / 30.86 |
@@ -863,8 +863,8 @@ and the colour error). Noise is added to the mosaic before development (variance
 | LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
 
-On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all: every other method trades some of it
-for edge detail. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
+On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all methods but FlashRaw edge-aware on Bayer, which
+smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)); on X-Trans bilinear still wins under noise. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
 0.12 dB behind LibRaw Markesteijn 1-pass on X-Trans.
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
@@ -876,7 +876,7 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
-| **FlashRaw edge-aware** | 2.10 | 2.24 |
+| **FlashRaw edge-aware** | 2.09 | 2.24 |
 | LibRaw linear (bilinear) | 5.14 | 4.26 |
 | LibRaw PPG | 1.95 | |
 | LibRaw DCB | 2.10 | |
@@ -903,7 +903,8 @@ LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1).
 | X-Trans, 1 thread | 508 | 2470 | 486 | 2252 | 5510 | 10941 |
 | X-Trans, 16 threads | 80 | 510 | 409 | 2179 | 1073 | 1905 |
 
-Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
+The timings below were taken on an idle machine before the noise smoothing of step 5 existed; it adds about 7 % CPU time on
+a noisy Bayer frame and nothing on a clean one. Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
 LibRaw AHD and PPG (2x and 5x slower); with 16 threads it is 1.3x slower than AHD and 2x slower than PPG. On X-Trans it is 2.2x to 4.4x
 faster than Markesteijn at one thread and 2.1x to 3.7x at 16.
 

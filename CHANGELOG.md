@@ -3,7 +3,7 @@
 ## Unreleased
 
 - `Demosaic::EdgeAware` (`edge-aware` in the CLI, Python, JavaScript and C): an opt-in demosaic for Bayer and
-  X-Trans sensors with directionally weighted 7x7 filters and a luminance-gated colour-difference stage (3x3 median on X-Trans). Far fewer zipper
+  X-Trans sensors with directionally weighted 7x7 filters and a luminance-gated colour-difference stage (3x3 median on X-Trans) and, on noisy Bayer frames, a gated smoothing. Far fewer zipper
   patterns and isolated coloured dots than bilinear (the X-Trans speckle of issue #3 goes from 4.29 to 2.25 on
   the chroma index of the report), 3.7x to 5.5x the develop time of bilinear. CPU only (the GPU backend
   decodes on the CPU for it). Bilinear stays the default. Method, training data and numbers:
