@@ -83,7 +83,7 @@ fn laplacian(a: &[f32], w: usize, h: usize) -> Vec<f32> {
 /// `(x0, y0)`: the shift for which `c(x + d)` best matches `g(x)`, with its correlation.
 fn tile_shift(lc: &[f32], lg: &[f32], w: usize, x0: usize, y0: usize) -> Option<(f32, f32, f32)> {
     let r = RANGE as usize;
-    let n = (2 * r + 1) as usize;
+    let n = 2 * r + 1;
     let mut ncc = vec![0f32; n * n];
     let (mut egg, mut best) = (0f32, (f32::MIN, 0usize));
     for y in 0..TILE {
