@@ -858,13 +858,13 @@ and the colour error). Noise is added to the mosaic before development (variance
 | X-Trans, photographic tiles | clean | moderate noise | high noise |
 |---|---:|---:|---:|
 | FlashRaw bilinear | 41.68 / 38.00 | 36.69 / 34.86 | 33.07 / 31.96 |
-| **FlashRaw edge-aware** | 41.89 / 39.14 | 35.79 / 34.66 | 31.82 / 31.21 |
+| **FlashRaw edge-aware** | 41.89 / 39.14 | 37.64 / 36.03 | 34.44 / 33.38 |
 | LibRaw Markesteijn 1-pass | 41.75 / 39.26 | 35.27 / 34.31 | 31.32 / 30.77 |
 | LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
 
-On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all methods but FlashRaw edge-aware on Bayer, which
-smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)); on X-Trans bilinear still wins under noise. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
+On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all methods but FlashRaw edge-aware, which
+smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)). On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
 0.12 dB behind LibRaw Markesteijn 1-pass on X-Trans.
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
@@ -876,7 +876,7 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
-| **FlashRaw edge-aware** | 2.09 | 2.24 |
+| **FlashRaw edge-aware** | 2.09 | 2.20 |
 | LibRaw linear (bilinear) | 5.14 | 4.26 |
 | LibRaw PPG | 1.95 | |
 | LibRaw DCB | 2.10 | |

@@ -23,7 +23,7 @@
 //!    of the 3x3 window, a site counting `1 / (1 + ((G_site - G) / s)^2)` with
 //!    `s = 0.2 G + 0.015`, so that colour does not leak across a luminance edge; then the
 //!    same over the differences of all pixels of the 3x3 window with `s = 0.1 G + 0.007`.
-//! 5. Bayer only, on noisy frames: every channel of the pixel moves by `beta` towards the
+//! 5. On noisy frames: every channel of the pixel moves by `beta` towards the
 //!    mean of its 3x3 window, weighted as in step 4 with `s = 0.2 G + 0.015`. `beta` is 0 for
 //!    clean frames and up to 0.5 for noisy ones, from a noise estimate over 48 rows of the
 //!    whole frame ([`Plan::set_noise_from`]): the lower quintile of
@@ -196,37 +196,46 @@ impl Plan {
         if self.t.period == 2 {
             return self.develop_bayer(w, (y0, y1), (xa, xb), wb, fetch, out);
         }
-        // One pixel more on every side for the 3x3 medians.
-        let (er, ec) = (nr + 2, nc + 2);
+        // One pixel more on every side for the 3x3 medians, and `h` more for the smoothing.
+        let h = usize::from(self.beta > 0.0);
+        let m = 1 + h;
+        let (er, ec) = (nr + 2 * m, nc + 2 * m);
         let mut rgb: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0f32; er * ec]);
-        self.demosaic(w, (y0 - 1, y1 + 1), (xa - 1, xb + 1), wb, fetch, &mut rgb);
+        self.demosaic(w, (y0 - m, y1 + m), (xa - m, xb + m), wb, fetch, &mut rgb);
         let t = self.t;
         let p = t.period;
         let [r, g, bl] = &rgb;
-        // Colour differences, then their 3x3 medians (rows of `nc` values at a time).
+        // Colour differences, then their 3x3 medians (rows of `e2c` values at a time).
         let rg: Vec<f32> = r.iter().zip(g).map(|(a, b)| a - b).collect();
         let bg: Vec<f32> = bl.iter().zip(g).map(|(a, b)| a - b).collect();
-        let mut mr = vec![0f32; nc];
-        let mut mb = vec![0f32; nc];
-        for i in 0..nr {
-            let cr = (y0 + i + self.cy) % p;
-            let o = &mut out[i * nc..(i + 1) * nc];
+        let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
+        let mut mr = vec![0f32; e2c];
+        let mut mb = vec![0f32; e2c];
+        let mut v2 = vec![[0f32; 3]; e2r * e2c];
+        for i in 0..e2r {
+            let cr = (y0 + i + self.cy + p - h) % p;
             median_row(&rg, ec, i, &mut mr);
             median_row(&bg, ec, i, &mut mb);
-            for (j, px) in o.iter_mut().enumerate() {
+            for j in 0..e2c {
                 let c = (i + 1) * ec + j + 1;
-                let own = t.canon[cr * p + (xa + j + self.cx) % p];
-                *px = [if own == 0 { r[c] } else { g[c] + mr[j] }, g[c], if own == 2 { bl[c] } else { g[c] + mb[j] }];
+                let own = t.canon[cr * p + (xa + j + self.cx + p - h) % p];
+                v2[i * e2c + j] =
+                    [if own == 0 { r[c] } else { g[c] + mr[j] }, g[c], if own == 2 { bl[c] } else { g[c] + mb[j] }];
             }
+        }
+        if h == 0 {
+            out.copy_from_slice(&v2);
+        } else {
+            smooth(&v2, e2c, self.beta, nr, nc, out);
         }
     }
 
-    /// Estimate the noise of a Bayer frame of `w` x `h` samples and set the weight of the
+    /// Estimate the noise of a frame of `w` x `h` samples and set the weight of the
     /// smoothing pass (module docs, step 5) from it. Deterministic and independent of any
     /// crop: 48 rows spread over the whole frame, so call it with the full frame's `fetch`.
     pub(crate) fn set_noise_from(&mut self, w: usize, h: usize, g_gain: f32, fetch: &mut dyn FnMut(usize, &mut [f32])) {
         self.beta = 0.0;
-        if self.t.period != 2 || h < 16 || w < 16 {
+        if h < 16 || w < 16 {
             return;
         }
         const ROWS: usize = 48;
@@ -235,14 +244,22 @@ impl Plan {
         for n in 0..ROWS {
             let y = 4 + n * (h - 9) / (ROWS - 1);
             fetch(y, &mut row);
+            let p = self.t.period;
+            let green = |x: usize| self.t.canon[((y + self.cy) % p) * p + (x + self.cx) % p] == 1;
             for x in 0..w - 2 {
-                if self.t.canon[((y + self.cy) % 2) * 2 + (x + self.cx) % 2] != 1 {
+                if !green(x) {
                     continue;
                 }
-                let (a, b) = (row[x] * g_gain, row[x + 2] * g_gain);
-                let mid = 0.5 * (a + b);
-                if mid > 0.03 && mid < 0.6 {
-                    v.push((a - b).abs() / mid.sqrt());
+                // Same-colour green pairs one or two samples apart (two apart on Bayer).
+                for d in 1..=2 {
+                    if !green(x + d) {
+                        continue;
+                    }
+                    let (a, b) = (row[x] * g_gain, row[x + d] * g_gain);
+                    let mid = 0.5 * (a + b);
+                    if mid > 0.03 && mid < 0.6 {
+                        v.push((a - b).abs() / mid.sqrt());
+                    }
                 }
             }
         }
@@ -353,28 +370,7 @@ impl Plan {
             out.copy_from_slice(&v2);
             return;
         }
-        // Smoothing: the pixel moves by `beta` towards the mean of its 3x3 window, a neighbour
-        // weighing 1 / (1 + e^2) with e = (G_neighbour - G) / (0.2 G + 0.015).
-        let beta = self.beta;
-        for i in 0..nr {
-            for j in 0..nc {
-                let p = v2[(i + 1) * e2c + j + 1];
-                let inv = 1.0 / (0.2 * p[1].max(0.0) + 0.015);
-                let (mut sw, mut s) = (0f32, [0f32; 3]);
-                for dy in 0..3 {
-                    for dx in 0..3 {
-                        let q = v2[(i + dy) * e2c + j + dx];
-                        let e = (q[1] - p[1]) * inv;
-                        let wt = 1.0 / (1.0 + e * e);
-                        sw += wt;
-                        for c in 0..3 {
-                            s[c] += wt * q[c];
-                        }
-                    }
-                }
-                out[i * nc + j] = [0, 1, 2].map(|c| p[c] + beta * (s[c] / sw - p[c]));
-            }
-        }
+        smooth(&v2, e2c, self.beta, nr, nc, out);
     }
 
     /// The filters over `y0..y1` x `xa..xb`, into three planes of `(y1-y0) * (xb-xa)`; needs
@@ -570,6 +566,32 @@ impl Plan {
 
 /// Medians of the 3x3 neighbourhoods of row `i + 1` of `a` (`ec` wide), for the columns
 /// `1..ec - 1`, into `out`.
+/// Smoothing (module docs, step 5): each pixel of the `nr` x `nc` core of `v` (rows of `ec`
+/// pixels, one pixel of margin on every side) moves by `beta` towards the mean of its 3x3
+/// window, a neighbour weighing `1 / (1 + e^2)` with `e = (G_neighbour - G) / (0.2 G + 0.015)`.
+#[inline(always)]
+fn smooth(v: &[[f32; 3]], ec: usize, beta: f32, nr: usize, nc: usize, out: &mut [[f32; 3]]) {
+    for i in 0..nr {
+        for j in 0..nc {
+            let p = v[(i + 1) * ec + j + 1];
+            let inv = 1.0 / (0.2 * p[1].max(0.0) + 0.015);
+            let (mut sw, mut s) = (0f32, [0f32; 3]);
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let q = v[(i + dy) * ec + j + dx];
+                    let e = (q[1] - p[1]) * inv;
+                    let wt = 1.0 / (1.0 + e * e);
+                    sw += wt;
+                    for c in 0..3 {
+                        s[c] += wt * q[c];
+                    }
+                }
+            }
+            out[i * nc + j] = [0, 1, 2].map(|c| p[c] + beta * (s[c] / sw - p[c]));
+        }
+    }
+}
+
 fn median_row(a: &[f32], ec: usize, i: usize, out: &mut [f32]) {
     let n = out.len();
     let r0 = &a[i * ec..(i + 1) * ec];
@@ -675,7 +697,7 @@ mod tests {
 
     #[test]
     fn smoothing_keeps_bands_and_crops_identical_and_flat_fields_flat() {
-        let (w, h) = (70, 53);
+        let (w, h) = (90, 60);
         let mut s = 777u32;
         let m: Vec<f32> = (0..w * h)
             .map(|_| {
@@ -683,22 +705,26 @@ mod tests {
                 (s >> 8) as f32 / (1u32 << 24) as f32
             })
             .collect();
-        let (_, cfa) = patterns().remove(0);
-        let mut plan = Plan::new(&cfa, &chan(), (0, 0)).unwrap();
-        plan.beta = 0.4;
-        let all = run(&plan, w, h, &m, (HALO, h - HALO), (HALO, w - HALO));
-        let nc = w - 2 * HALO;
-        let part = run(&plan, w, h, &m, (9, 20), (13, 41));
-        for (i, y) in (9..20).enumerate() {
-            for (j, x) in (13..41).enumerate() {
-                assert_eq!(part[i * 28 + j], all[(y - HALO) * nc + x - HALO], "({x},{y})");
+        for (name, cfa) in patterns() {
+            let mut plan = Plan::new(&cfa, &chan(), (0, 0)).unwrap();
+            plan.beta = 0.4;
+            let all = run(&plan, w, h, &m, (HALO, h - HALO), (HALO, w - HALO));
+            let nc = w - 2 * HALO;
+            let part = run(&plan, w, h, &m, (9, 20), (13, 41));
+            for (i, y) in (9..20).enumerate() {
+                for (j, x) in (13..41).enumerate() {
+                    assert_eq!(part[i * 28 + j], all[(y - HALO) * nc + x - HALO], "{name}: ({x},{y})");
+                }
             }
-        }
-        let flat = vec![0.3f32; w * h];
-        for px in run(&plan, w, h, &flat, (HALO, h - HALO), (HALO, w - HALO)) {
-            for c in px {
-                assert!((c - 0.3).abs() < 1e-5, "{px:?}");
+            let flat = vec![0.3f32; w * h];
+            for px in run(&plan, w, h, &flat, (HALO, h - HALO), (HALO, w - HALO)) {
+                for c in px {
+                    assert!((c - 0.3).abs() < 1e-5, "{name}: {px:?}");
+                }
             }
+            // Smoothing changes the result of noise, not of nothing.
+            plan.beta = 0.0;
+            assert_ne!(run(&plan, w, h, &m, (HALO, h - HALO), (HALO, w - HALO)), all, "{name}");
         }
     }
 
