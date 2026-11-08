@@ -513,6 +513,7 @@ class RawFile:
         intent: str = "perceptual",
         black_point_compensation: bool = False,
         highlights: str = "clip",
+        white_balance: str = "as-shot",
     ) -> Frame:
         """Decode the sensor data. The GIL is released while decoding.
 
@@ -562,6 +563,8 @@ class RawFile:
             highlights: ``"clip"`` (default), ``"neutral"`` (fade pixels at or near sensor
                 saturation to white instead of leaving a colour cast) or ``"blend"`` (the same,
                 and pixels above white after white balance keep their colour) (CPU only).
+            white_balance: ``"as-shot"`` (default, the camera's balance) or ``"auto"`` (refine the camera's
+                balance over the near-neutral areas; CPU only).
         """
         t0 = time.perf_counter()
         array, info = self._native.decode(
@@ -583,6 +586,7 @@ class RawFile:
             intent,
             black_point_compensation,
             highlights,
+            white_balance,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -608,6 +612,7 @@ class RawFile:
         intent: str = "perceptual",
         black_point_compensation: bool = False,
         highlights: str = "clip",
+        white_balance: str = "as-shot",
     ) -> Frame:
         """Decode one independently decodable tile/strip (see :attr:`tiles`)."""
         t0 = time.perf_counter()
@@ -630,6 +635,7 @@ class RawFile:
             intent,
             black_point_compensation,
             highlights,
+            white_balance,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 

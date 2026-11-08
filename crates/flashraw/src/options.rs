@@ -20,6 +20,25 @@ pub enum Backend {
     Gpu,
 }
 
+impl WhiteBalanceMode {
+    /// Parse a white balance mode name (`as-shot`, `auto`; case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
+            "as-shot" | "asshot" | "camera" => WhiteBalanceMode::AsShot,
+            "auto" => WhiteBalanceMode::Auto,
+            _ => return None,
+        })
+    }
+
+    /// Canonical name, accepted by [`WhiteBalanceMode::parse`].
+    pub fn name(self) -> &'static str {
+        match self {
+            WhiteBalanceMode::AsShot => "as-shot",
+            WhiteBalanceMode::Auto => "auto",
+        }
+    }
+}
+
 impl Backend {
     /// Parse a backend name (`auto`, `cpu`/`scalar`, `simd`/`cpu-simd`, `gpu`/`webgpu`;
     /// case-insensitive).
@@ -184,6 +203,25 @@ pub enum Highlights {
     Blend,
 }
 
+/// Where the white balance of RGB outputs comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum WhiteBalanceMode {
+    /// The camera's balance recorded in the file (the default).
+    #[default]
+    AsShot,
+    /// Starts from the camera's balance and refines it over the near-neutral areas of the
+    /// frame (6x6 blocks that are mid-tone and have red and blue within 30 % of green, after
+    /// the current balance), so that their means are equal; coloured areas that dominate the
+    /// scene do not take part and the result stays within a factor of two of the camera's. A
+    /// simple estimate, not a substitute for a grey card. Frames the camera already balanced,
+    /// four-colour and Foveon sensors, files without a colour filter array and frames with too
+    /// few near-neutral areas keep the as-shot balance. CPU only (the GPU backend decodes on
+    /// the CPU for it).
+    Auto,
+}
+
 /// What a decode does when the sensor data is corrupt or truncated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -247,6 +285,8 @@ pub struct DecodeOptions {
     pub demosaic: Demosaic,
     /// Clipped highlights of RGB outputs. Default: [`Highlights::Clip`].
     pub highlights: Highlights,
+    /// White balance of RGB outputs. Default: [`WhiteBalanceMode::AsShot`].
+    pub white_balance: WhiteBalanceMode,
     /// Apply DNG opcode lists (bad pixels, lens-shading gain maps, ...) in their
     /// specified stages. Geometric opcodes are never applied. Default: true.
     pub apply_opcodes: bool,
@@ -314,6 +354,7 @@ impl Default for DecodeOptions {
             crop: true,
             demosaic: Demosaic::Bilinear,
             highlights: Highlights::Clip,
+            white_balance: WhiteBalanceMode::AsShot,
             apply_opcodes: true,
             limits: Limits::default(),
             corruption_policy: CorruptionPolicy::Recover,
@@ -437,6 +478,7 @@ name_traits!(Backend, "backend");
 name_traits!(OutputFormat, "output format");
 name_traits!(Demosaic, "demosaic");
 name_traits!(Highlights, "highlight mode");
+name_traits!(WhiteBalanceMode, "white balance mode");
 name_traits!(CorruptionPolicy, "corruption policy");
 name_traits!(ColorSpace, "color space");
 name_traits!(RenderingIntent, "rendering intent");
@@ -468,6 +510,9 @@ mod tests {
         }
         for h in [Highlights::Clip, Highlights::Neutral, Highlights::Blend] {
             assert_eq!(h.to_string().parse::<Highlights>(), Ok(h));
+        }
+        for m in [WhiteBalanceMode::AsShot, WhiteBalanceMode::Auto] {
+            assert_eq!(m.to_string().parse::<WhiteBalanceMode>(), Ok(m));
         }
         for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware] {
             assert_eq!(d.to_string().parse::<Demosaic>(), Ok(d));

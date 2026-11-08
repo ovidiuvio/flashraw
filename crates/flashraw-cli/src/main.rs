@@ -7,7 +7,7 @@ mod probe;
 use clap::{Args, Parser, Subcommand};
 use flashraw::{
     Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, OutputFormat, OutputProfile,
-    Rect, RenderingIntent,
+    Rect, RenderingIntent, WhiteBalanceMode,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,6 +43,9 @@ struct DecodeArgs {
     /// Clipped highlights of RGB outputs: clip, neutral, blend.
     #[arg(long, default_value = "clip")]
     highlights: String,
+    /// White balance of RGB outputs: as-shot, auto (refine the camera's over near-neutral areas).
+    #[arg(long, default_value = "as-shot")]
+    white_balance: String,
     /// Do not apply DNG opcode lists (bad pixels, lens shading, ...).
     #[arg(long)]
     no_opcodes: bool,
@@ -221,6 +224,8 @@ fn decode_options(a: &DecodeArgs) -> Result<DecodeOptions, String> {
         region: a.region,
         demosaic: Demosaic::parse(&a.demosaic).ok_or_else(|| format!("unknown demosaic {:?}", a.demosaic))?,
         highlights: Highlights::parse(&a.highlights).ok_or_else(|| format!("unknown highlights {:?}", a.highlights))?,
+        white_balance: WhiteBalanceMode::parse(&a.white_balance)
+            .ok_or_else(|| format!("unknown white balance {:?}", a.white_balance))?,
         apply_opcodes: !a.no_opcodes,
         corruption_policy: policy(a.strict),
         exposure: a.exposure,

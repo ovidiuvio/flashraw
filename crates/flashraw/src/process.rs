@@ -417,6 +417,80 @@ impl DevelopParams {
 /// fading a pixel to white; it is fully white at 1, the sensor's saturation.
 const NEUTRAL_START: f32 = 0.95;
 
+/// Automatic white balance of a colour filter array frame: starting from `start` (the
+/// camera's multipliers), refine them over the near-neutral areas. The frame is cut into 6x6
+/// blocks (a multiple of the Bayer and X-Trans periods) and each block's mean per colour is
+/// balanced with the current multipliers; the blocks that are mid-tone (green between 5 % and
+/// 80 % of the white level), unclipped and near neutral (red and blue within 30 % of green)
+/// then pull the multipliers so that their means are equal, three times over. Coloured areas
+/// that dominate the scene do not take part, and the result stays within a factor of two of
+/// `start`. `None` when the frame is not a three-colour mosaic that still needs balancing, or
+/// fewer than 200 blocks are near neutral.
+pub(crate) fn auto_white_balance(
+    img: &RawImage,
+    info: &FrameInfo,
+    origin: (u32, u32),
+    start: [f32; 4],
+) -> Option<[f32; 4]> {
+    let cfa = info.cfa?;
+    if img.cpp != 1
+        || info.white_balance_applied
+        || cfa.four_colour_order().is_some()
+        || info.layout == SensorLayout::Foveon
+        || 6 % cfa.width() != 0
+        || 6 % cfa.height() != 0
+    {
+        return None;
+    }
+    let k = normalizer(img, info, origin);
+    let (w, h) = (img.width as usize, img.height as usize);
+    let (ox, oy) = k.origin;
+    let mut rows = vec![vec![0f32; w]; 6];
+    let mut blocks: Vec<[f32; 3]> = Vec::new();
+    for by in 0..h / 6 {
+        for (i, r) in rows.iter_mut().enumerate() {
+            k.normalize_row(by * 6 + i, r);
+        }
+        for bx in 0..w / 6 {
+            let (mut sum, mut n, mut clipped) = ([0f32; 3], [0f32; 3], false);
+            for (i, r) in rows.iter().enumerate() {
+                for (j, &v) in r[bx * 6..bx * 6 + 6].iter().enumerate() {
+                    let c = k.chan[cfa.color_at(bx * 6 + j + ox, by * 6 + i + oy) as usize] as usize;
+                    if c < 3 {
+                        sum[c] += v;
+                        n[c] += 1.0;
+                        clipped |= v > 0.95;
+                    }
+                }
+            }
+            if !clipped && n.iter().all(|&c| c > 0.0) {
+                blocks.push([sum[0] / n[0], sum[1] / n[1], sum[2] / n[2]]);
+            }
+        }
+    }
+    let mut wb = [start[0].max(1e-3), 1.0, start[2].max(1e-3)];
+    for _ in 0..3 {
+        let (mut acc, mut n) = ([0f64; 3], 0u32);
+        for b in &blocks {
+            let (r, g, bl) = (b[0] * wb[0], b[1], b[2] * wb[2]);
+            if g > 0.05 && g < 0.8 && (r / g - 1.0).abs() < 0.3 && (bl / g - 1.0).abs() < 0.3 {
+                acc[0] += r as f64;
+                acc[1] += g as f64;
+                acc[2] += bl as f64;
+                n += 1;
+            }
+        }
+        if n < 200 {
+            return None;
+        }
+        wb[0] *= (acc[1] / acc[0]) as f32;
+        wb[2] *= (acc[1] / acc[2]) as f32;
+        wb[0] = wb[0].clamp(start[0] * 0.5, start[0] * 2.0);
+        wb[2] = wb[2].clamp(start[2] * 0.5, start[2] * 2.0);
+    }
+    Some([wb[0], 1.0, wb[2], start[3]])
+}
+
 /// White balance, clip at sensor saturation, camera → linear sRGB, levels.
 #[inline(always)]
 pub(crate) fn finish_rgb(
@@ -1569,6 +1643,49 @@ mod tests {
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
         info.white_balance = None;
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
+    }
+
+    #[test]
+    fn auto_white_balance_refines_the_start_over_neutral_areas_and_ignores_coloured_ones() {
+        let (w, h) = (192u32, 192u32);
+        let mut img = RawImage::new_u16(w, h, 1, &Limits::default()).unwrap();
+        // RGGB, black 0, white 4000. A neutral surface under a light that the start balance
+        // (2.0, 1.5) gets wrong: the true multipliers are (2.2, 1.6), so neutral reads
+        // R = 1000, G = 2200, B = 1375. The top third is a saturated red object.
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                let ripple = ((x * 7 + y * 13) % 11) as u16 * 3;
+                let v = if y < 64 {
+                    match (y % 2, x % 2) {
+                        (0, 0) => 3200,
+                        (1, 1) => 200,
+                        _ => 600,
+                    }
+                } else {
+                    match (y % 2, x % 2) {
+                        (0, 0) => 1000,
+                        (1, 1) => 1375,
+                        _ => 2200,
+                    }
+                };
+                img.u16_mut()[y * w as usize + x] = v + ripple;
+            }
+        }
+        let mut info = FrameInfo::new(w, h, 12);
+        info.cfa = Some(CfaPattern::RGGB);
+        info.black_level = BlackLevel::uniform(0.0);
+        info.white_level = WhiteLevel::uniform(4000);
+        let wb = auto_white_balance(&img, &info, (0, 0), [2.0, 1.0, 1.5, 1.0]).unwrap();
+        assert!((wb[0] - 2.2).abs() < 0.05 && wb[1] == 1.0 && (wb[2] - 1.6).abs() < 0.05, "{wb:?}");
+        // The multipliers never leave a factor of two around the start.
+        let far = auto_white_balance(&img, &info, (0, 0), [5.0, 1.0, 1.0, 1.0]);
+        assert!(far.is_none_or(|f| f[0] >= 2.5 && f[2] >= 0.5));
+        // Frames the camera balanced, and sensors without a three-colour mosaic, are left alone.
+        info.white_balance_applied = true;
+        assert_eq!(auto_white_balance(&img, &info, (0, 0), [2.0, 1.0, 1.5, 1.0]), None);
+        info.white_balance_applied = false;
+        info.cfa = None;
+        assert_eq!(auto_white_balance(&img, &info, (0, 0), [2.0, 1.0, 1.5, 1.0]), None);
     }
 
     #[test]

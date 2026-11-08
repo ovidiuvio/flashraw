@@ -12,6 +12,9 @@
   `flashraw_decode_options.highlights`): pixels with a channel at or near sensor saturation fade smoothly to
   white instead of keeping the colour cast of a partly clipped pixel (magenta, yellow). `Clip`, the old
   behaviour, stays the default. CPU only (the GPU backend decodes on the CPU for it).
+- `WhiteBalanceMode::Auto` (`--white-balance auto`, `white_balance="auto"`, `whiteBalance: 'auto'`, `FLASHRAW_WHITE_BALANCE_AUTO`): a
+  white balance that refines the camera's over the near-neutral areas of the frame, opt-in; the camera's balance stays the default. CPU only (the
+  GPU backend decodes on the CPU for it). `flashraw_decode_options` grows by 8 bytes (`white_balance`, a reserved word).
 - `Highlights::Blend` (`--highlights blend`, `highlights="blend"`, `highlights: 'blend'`, `FLASHRAW_HIGHLIGHTS_BLEND`): as
   `Neutral`, and pixels that exceed the white level after white balance are scaled down together instead of clamped
   channel by channel, so a bright red stays red where `Clip` turns it pink. Nothing changes below the white level.

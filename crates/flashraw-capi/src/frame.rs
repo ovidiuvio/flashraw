@@ -62,6 +62,8 @@ pub(crate) fn default_decode_options() -> flashraw_decode_options {
         highlights: 0,
         output_profile: std::ptr::null(),
         output_profile_len: 0,
+        white_balance: 0,
+        reserved: 0,
     }
 }
 
@@ -86,6 +88,7 @@ pub(crate) fn to_decode_options(o: &flashraw_decode_options, base: flashraw::Lim
         output: output_from(o.output)?,
         demosaic: demosaic_from(o.demosaic)?,
         highlights: highlights_from(o.highlights)?,
+        white_balance: white_balance_from(o.white_balance)?,
         corruption_policy: policy_from(o.corruption_policy)?,
         threads: (o.threads != 0).then_some(o.threads as usize),
         crop: o.crop != 0,

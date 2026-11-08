@@ -231,6 +231,31 @@ typedef int32_t flashraw_demosaic;
 #endif // __cplusplus
 
 /**
+ * White balance of the RGB outputs (`flashraw_decode_options.white_balance`).
+ */
+enum flashraw_white_balance
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * The camera's balance recorded in the file. The default.
+     */
+    FLASHRAW_WHITE_BALANCE_AS_SHOT = 0,
+    /**
+     * Refine the camera's balance over the near-neutral areas of the frame. CPU only (the GPU backend decodes on the CPU for it).
+     */
+    FLASHRAW_WHITE_BALANCE_AUTO = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum flashraw_white_balance flashraw_white_balance;
+#else
+typedef int32_t flashraw_white_balance;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
  * Clipped highlights of the RGB outputs (`flashraw_decode_options.highlights`).
  */
 enum flashraw_highlights
@@ -943,6 +968,15 @@ typedef struct flashraw_decode_options {
      * Size of `output_profile` in bytes.
      */
     size_t output_profile_len;
+    /**
+     * `flashraw_white_balance` of the RGB outputs. Default `FLASHRAW_WHITE_BALANCE_AS_SHOT` (0;
+     * absent from callers built against an older header).
+     */
+    int32_t white_balance;
+    /**
+     * Reserved, zero.
+     */
+    int32_t reserved;
 } flashraw_decode_options;
 
 /**

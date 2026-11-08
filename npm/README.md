@@ -267,6 +267,7 @@ const f = await raw.decode({
                             // | 'linear-rgb-f16' | 'rgba8' | 'rgb16'
   backend: 'auto',          // 'auto' | 'cpu' (scalar reference) | 'cpu-simd' | 'gpu'
   demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size' | 'edge-aware' (Bayer/X-Trans, CPU only)
+  whiteBalance: 'as-shot',  // RGB outputs: 'as-shot' | 'auto' (refine the camera's over the near-neutral areas; CPU only)
   highlights: 'clip',       // RGB outputs: 'clip' | 'neutral' (fade clipped pixels to white) | 'blend' (also keep the colour of pixels above white after white balance); CPU only
   crop: true,               // RGB outputs: apply the default crop; raw outputs: 'active' = active area only
   sampleType: 'f32',        // normalized, linear-rgb: 'f16' = half floats (Uint16Array bits, half the memory)

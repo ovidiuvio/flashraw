@@ -533,6 +533,12 @@ export interface DecodeOptions {
    */
   highlights?: 'clip' | 'neutral' | 'blend';
   /**
+   * White balance of RGB outputs. `as-shot` (default) uses the camera's balance; `auto` refines
+   * the camera's balance over the near-neutral areas of the frame (CPU only: the WebGPU build falls back to
+   * the CPU for it).
+   */
+  whiteBalance?: 'as-shot' | 'auto';
+  /**
    * RGB outputs: crop to the default crop (default true). Raw outputs (`raw-u16`, `raw-f32`,
    * `normalized`) are never cropped by `true`; `'active'` crops them to `frameInfo.activeArea`
    * (like `region: activeArea`): `origin` reports the buffer position, `cfa` is anchored at

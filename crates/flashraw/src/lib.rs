@@ -129,7 +129,9 @@ pub use flashraw_core::{
 };
 pub use frame::{BackendReport, DecodeStatistics, FrameSource, RawFrame, RawPixelData};
 pub use icc::{OutputProfile, RenderingIntent, icc_supported};
-pub use options::{Backend, CorruptionPolicy, DecodeOptions, Demosaic, Highlights, OutputFormat, ParseOptionError};
+pub use options::{
+    Backend, CorruptionPolicy, DecodeOptions, Demosaic, Highlights, OutputFormat, ParseOptionError, WhiteBalanceMode,
+};
 pub use source::Source;
 
 /// Low-level access for advanced users and tooling: the internal crates. Not covered
@@ -461,6 +463,12 @@ impl<'a> FlashRaw<'a> {
                 let mut params = setup.apply(process::DevelopParams::new(&frame_info_for_post, opts.demosaic, crop));
                 params.levels = levels;
                 params.highlights = opts.highlights;
+                if opts.white_balance == WhiteBalanceMode::Auto {
+                    if let Some(wb) = process::auto_white_balance(&img, &frame_info_for_post, origin, params.wb) {
+                        params.wb = wb;
+                        params.dm_wb = wb;
+                    }
+                }
                 let staged =
                     opts.apply_opcodes && lists.as_ref().is_some_and(|l| l.has_pixel_ops(1) || l.has_pixel_ops(2));
                 // Staggered lattices (SuperCCD) develop to linear RGB in the stored grid, then

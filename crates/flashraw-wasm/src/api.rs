@@ -263,6 +263,10 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
             ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip, neutral or blend)"))
         })?;
     }
+    if let Some(m) = str_opt(&v, "whiteBalance")? {
+        o.white_balance = flashraw::WhiteBalanceMode::parse(m)
+            .ok_or_else(|| ApiError::invalid(format!("unknown `whiteBalance` {m:?} (expected as-shot or auto)")))?;
+    }
     match v.get("applyOpcodes") {
         None | Some(Value::Null) => {}
         Some(Value::Bool(b)) => o.apply_opcodes = *b,

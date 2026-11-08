@@ -64,6 +64,16 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
 }
 
+/// White balance of the RGB outputs (`flashraw_decode_options.white_balance`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum flashraw_white_balance {
+    /// The camera's balance recorded in the file. The default.
+    FLASHRAW_WHITE_BALANCE_AS_SHOT = 0,
+    /// Refine the camera's balance over the near-neutral areas of the frame. CPU only (the GPU backend decodes on the CPU for it).
+    FLASHRAW_WHITE_BALANCE_AUTO = 1,
+}
+
 /// Clipped highlights of the RGB outputs (`flashraw_decode_options.highlights`).
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,6 +473,11 @@ pub struct flashraw_decode_options {
     pub output_profile: *const u8,
     /// Size of `output_profile` in bytes.
     pub output_profile_len: usize,
+    /// `flashraw_white_balance` of the RGB outputs. Default `FLASHRAW_WHITE_BALANCE_AS_SHOT` (0;
+    /// absent from callers built against an older header).
+    pub white_balance: i32,
+    /// Reserved, zero.
+    pub reserved: i32,
 }
 
 /// Size of the first published layout of each versioned struct. Callers built against an
@@ -618,6 +633,14 @@ pub(crate) fn intent_from(v: i32) -> FfiResult<RenderingIntent> {
     })
 }
 
+pub(crate) fn white_balance_from(v: i32) -> FfiResult<flashraw::WhiteBalanceMode> {
+    Ok(match v {
+        0 => flashraw::WhiteBalanceMode::AsShot,
+        1 => flashraw::WhiteBalanceMode::Auto,
+        _ => return Err(FfiError::invalid(format!("unknown white balance {v}"))),
+    })
+}
+
 pub(crate) fn highlights_from(v: i32) -> FfiResult<flashraw::Highlights> {
     Ok(match v {
         0 => flashraw::Highlights::Clip,
@@ -722,10 +745,11 @@ mod tests {
         assert_eq!(flashraw_decode_options::MIN_SIZE, 64);
         // Grown since: exposure, black_point, white_point, preview_fallback (80 bytes), then
         // color_space, intent, black_point_compensation, highlights and the output profile
-        // pointer and length (pointer-sized, so the total depends on the platform).
+        // pointer and length (pointer-sized, so the total depends on the platform), then white_balance
+        // and a reserved word.
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, preview_fallback), 76);
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, color_space), 80);
-        assert_eq!(size_of::<flashraw_decode_options>(), 96 + 2 * size_of::<usize>());
+        assert_eq!(size_of::<flashraw_decode_options>(), 104 + 2 * size_of::<usize>());
         assert_eq!(size_of::<flashraw_preview_info>(), flashraw_preview_info::MIN_SIZE);
         assert_eq!(size_of::<flashraw_decode_stats>(), flashraw_decode_stats::MIN_SIZE);
         assert_eq!(size_of::<flashraw_rect>(), 16);
