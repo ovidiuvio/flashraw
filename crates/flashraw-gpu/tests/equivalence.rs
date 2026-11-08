@@ -293,6 +293,7 @@ fn gpu_develop_matches_cpu() {
                     orientation,
                     output,
                     levels: None,
+                    edge: None,
                 };
                 let frame = GpuFrame::from_u16(img.u16(), w, h, case.cpp).with_origin(origin);
                 let what = format!("{} half={half} orient={orientation:?}", case.name);
@@ -350,6 +351,7 @@ fn gpu_develop_from_packed_and_f32() {
             orientation: Orientation::Normal,
             output: DevelopOutput::LinearRgbF32,
             levels: None,
+            edge: None,
         };
         let run = ctx.run_blocking(&frame, &info, &GpuOp::Develop(spec)).unwrap();
         let HostPixels::F32(got) = run.image.download().unwrap().0 else { panic!() };
@@ -378,6 +380,7 @@ fn gpu_develop_from_packed_and_f32() {
         orientation: Orientation::Normal,
         output: DevelopOutput::LinearRgbF32,
         levels: None,
+        edge: None,
     };
     let run = ctx.run_blocking(&GpuFrame::from_f32(data, 64, 48, 1), &info, &GpuOp::Develop(spec)).unwrap();
     let HostPixels::F32(got) = run.image.download().unwrap().0 else { panic!() };
@@ -403,6 +406,7 @@ fn gpu_image_to_texture() {
         orientation: Orientation::Rotate90,
         output: DevelopOutput::Rgba8,
         levels: None,
+        edge: None,
     };
     let run = ctx.run_blocking(&GpuFrame::from_u16(img.u16(), 40, 30, 1), &info, &GpuOp::Develop(spec)).unwrap();
     let tex = run.image.to_texture().unwrap();
@@ -517,6 +521,7 @@ fn gpu_tiled_develop_matches_untiled_and_cpu() {
                         orientation,
                         output,
                         levels: None,
+                        edge: None,
                     });
                     let base = ctx.run_blocking(&frame, &info, &op).unwrap();
                     assert_eq!(base.timings.bands, 1);
@@ -631,6 +636,7 @@ fn gpu_tiled_packed_develop_and_texture() {
                 orientation,
                 output: DevelopOutput::Rgba8,
                 levels: None,
+                edge: None,
             });
             let base = ctx.run_blocking(&frame, &info, &op).unwrap();
             let want = download(&base);
@@ -758,6 +764,7 @@ fn gpu_develop_16bit_outputs_match_cpu() {
                             orientation,
                             output,
                             levels: lv.map(|l| [l.scale, l.offset]),
+                            edge: None,
                         };
                         let run = ctx.run_blocking(&frame, &info, &GpuOp::Develop(spec)).unwrap();
                         assert_eq!(
@@ -817,6 +824,7 @@ fn gpu_color_spaces_match_cpu() {
             orientation: params.orientation,
             output,
             levels: None,
+            edge: None,
         };
         let what = format!("{cs:?}");
         let run = ctx.run_blocking(&frame, &info, &GpuOp::Develop(spec(DevelopOutput::LinearRgbF32))).unwrap();

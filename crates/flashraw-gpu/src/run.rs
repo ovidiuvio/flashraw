@@ -127,6 +127,49 @@ pub struct DevelopSpec {
     pub levels: Option<[f32; 2]>,
     /// Transfer-curve tables of the display outputs; `None`: sRGB.
     pub curve: Option<GpuCurve>,
+    /// Edge-aware demosaic (Bayer and X-Trans mosaics) instead of the bilinear one; ignored
+    /// with `half_size` and for frames that are not a single-component mosaic.
+    pub edge: Option<EdgeSpec>,
+}
+
+/// The edge-aware demosaic of one frame (the GPU side of `flashraw`'s `Demosaic::EdgeAware`):
+/// the filter tables and where the CFA sits in them. `flashraw::gpu::edge_spec` builds it
+/// from the CPU plan; the mosaic is balanced by [`DevelopSpec::wb`].
+#[derive(Debug, Clone, Copy)]
+pub struct EdgeSpec {
+    /// Repeat of the pattern: 2 (Bayer) or 6 (X-Trans).
+    pub period: u32,
+    /// Canonical pattern column and row of frame column and row 0.
+    pub cx: u32,
+    pub cy: u32,
+    /// Weight of the smoothing of the output: 0 for clean frames, up to 0.5 for noisy ones.
+    pub beta: f32,
+    /// Pixels from the frame border that are developed bilinearly (the CPU `edgeaware::HALO`).
+    pub halo: u32,
+    /// Colour (0 R, 1 G, 2 B) of each position of the canonical pattern, `period` squared.
+    pub canon: &'static [u8],
+    /// `[period*period][49]`: the 7x7 filter of the first green estimate.
+    pub g0: &'static [f32],
+    /// `[period*period][3][4][49]`: the 7x7 filters per position, colour and direction.
+    pub dir: &'static [f32],
+}
+
+/// Bytes of scratch planes (8 floats per pixel) an edge-aware band may use at most.
+const EDGE_SCRATCH_MAX: u64 = 512 << 20;
+/// Planes of the edge-aware scratch buffer (see `shaders/edge.wgsl`).
+const EDGE_PLANES: u64 = 8;
+
+/// Everything the edge-aware passes of one run need besides the common bindings.
+struct EdgeRun {
+    /// One `EdgeParams` per band, `stride` bytes apart.
+    params: wgpu::Buffer,
+    stride: u64,
+    tables: Arc<wgpu::Buffer>,
+    scratch: wgpu::Buffer,
+    /// Per band: pixels in the scratch rectangle, its size in groups of 16, scratch bytes.
+    bands: Vec<(u32, (u32, u32), u64)>,
+    /// The passes before the final encode, in dispatch order.
+    passes: Vec<wgpu::ComputePipeline>,
 }
 
 /// Encoder tables of a non-sRGB output curve (the CPU `CurveTables`).
@@ -261,6 +304,8 @@ pub(crate) enum BandKind {
     Bilinear { crop_y: u32 },
     /// 2x2 superpixel: rows `crop_y + 2y ..= crop_y + 2y + 1`.
     Half { crop_y: u32 },
+    /// Edge-aware demosaic: `halo` rows on each side.
+    Edge { crop_y: u32, halo: u32 },
 }
 
 impl BandGeometry {
@@ -270,6 +315,7 @@ impl BandGeometry {
             BandKind::Direct => (y0, y1.min(h)),
             BandKind::Bilinear { crop_y } => ((crop_y + y0).saturating_sub(1), (crop_y + y1 + 1).min(h)),
             BandKind::Half { crop_y } => ((crop_y + 2 * y0).min(h), (crop_y + 2 * y1).min(h)),
+            BandKind::Edge { crop_y, halo } => ((crop_y + y0).saturating_sub(halo), (crop_y + y1 + halo).min(h)),
         }
     }
 
@@ -281,6 +327,7 @@ impl BandGeometry {
             BandKind::Direct => rows_in,
             BandKind::Bilinear { .. } => rows_in.saturating_sub(2),
             BandKind::Half { .. } => rows_in / 2,
+            BandKind::Edge { halo, .. } => rows_in.saturating_sub(2 * halo as u64),
         };
         let n_out = if out_whole { u64::MAX } else { budget.saturating_sub(out_slack) / self.out_row_bytes.max(1) };
         let mut n = n_in.min(n_out).min(self.max_rows as u64).min(self.rows as u64) as u32;
@@ -365,6 +412,7 @@ impl GpuContext {
             )));
         }
         let mut curve: Option<GpuCurve> = None;
+        let mut edge: Option<EdgeSpec> = None;
         let mut p = Params {
             srgb_n: 4096,
             width: w,
@@ -466,6 +514,7 @@ impl GpuContext {
                 if let Some([scale, offset]) = d.levels {
                     p.levels = [scale, offset, 1.0, 0.0];
                 }
+                edge = d.edge.filter(|_| !d.half_size && cpp == 1 && info.cfa.is_some());
                 let layout = if cpp == 1 && info.cfa.is_some_and(|c| c.is_bayer()) {
                     3
                 } else if cpp == 1 && info.cfa.is_some() {
@@ -494,12 +543,41 @@ impl GpuContext {
                 p.out_h = oh;
                 geo.rows = dh;
                 geo.out_row_bytes = dw as u64 * ch as u64 * fmt.bytes_per_sample() as u64;
-                geo.kind =
-                    if d.half_size { BandKind::Half { crop_y: crop.y } } else { BandKind::Bilinear { crop_y: crop.y } };
+                geo.kind = match (&edge, d.half_size) {
+                    (Some(e), _) => BandKind::Edge { crop_y: crop.y, halo: e.halo },
+                    (None, true) => BandKind::Half { crop_y: crop.y },
+                    (None, false) => BandKind::Bilinear { crop_y: crop.y },
+                };
                 geo.tile_rows = 16;
                 geo.max_rows = 16 * self.device.limits().max_compute_workgroups_per_dimension;
+                if let Some(e) = &edge {
+                    // Eight scratch planes over the band plus the halo must fit one binding.
+                    let table = e.period as usize * e.period as usize;
+                    if !matches!(e.period, 2 | 6)
+                        || e.canon.len() != table
+                        || e.g0.len() != table * 49
+                        || e.dir.len() != table * 3 * 4 * 49
+                    {
+                        return Err(Error::InvalidArgument("inconsistent edge-aware filter tables".into()));
+                    }
+                    let row_bytes = (dw as u64 + 2 * e.halo as u64) * EDGE_PLANES * 4;
+                    let avail = EDGE_SCRATCH_MAX.min(self.max_binding_bytes());
+                    let rows = (avail / row_bytes).saturating_sub(2 * e.halo as u64);
+                    if rows == 0 {
+                        return Err(Error::LimitExceeded(
+                            "frame too wide for the edge-aware demosaic on this GPU".into(),
+                        ));
+                    }
+                    geo.max_rows = geo.max_rows.min(rows.min(u32::MAX as u64) as u32);
+                }
                 let key = PipelineKey {
-                    kernel: if d.half_size { Kernel::DevelopHalf } else { Kernel::Develop },
+                    kernel: if edge.is_some() {
+                        Kernel::EdgeDevelop
+                    } else if d.half_size {
+                        Kernel::DevelopHalf
+                    } else {
+                        Kernel::Develop
+                    },
                     input_mode,
                     order,
                     use_lut,
@@ -698,6 +776,79 @@ impl GpuContext {
             (qs, resolve, read)
         });
         let pipeline = self.pipeline(key);
+        let edge_run = match &edge {
+            Some(e) => {
+                let mut eps = Vec::with_capacity(bands.len());
+                let mut info_b = Vec::with_capacity(bands.len());
+                let table = e.period * e.period;
+                for b in &bands {
+                    // The interior pixels of the band (at least `halo` from the frame border)
+                    // plus `halo` pixels on every side; no rectangle without interior pixels.
+                    let (hl, fw, fh) = (e.halo, p.width, p.height);
+                    let (ix0, ix1) = (p.crop_x.max(hl), (p.crop_x + p.dev_w).min(fw.saturating_sub(hl)));
+                    let (iy0, iy1) = ((p.crop_y + b.y0).max(hl), (p.crop_y + b.y1).min(fh.saturating_sub(hl)));
+                    let (ex0, ey0, ew, eh) = if ix1 > ix0 && iy1 > iy0 {
+                        (ix0 - hl, iy0 - hl, ix1 - ix0 + 2 * hl, iy1 - iy0 + 2 * hl)
+                    } else {
+                        (0, 0, 0, 0)
+                    };
+                    let n = u32_checked(ew as u64 * eh as u64, "edge-aware band")?;
+                    eps.push(kernels::EdgeParams {
+                        period: e.period,
+                        cx: e.cx,
+                        cy: e.cy,
+                        off_g0: table,
+                        off_dir: table + table * 49,
+                        ex0,
+                        ey0,
+                        ew,
+                        eh,
+                        n,
+                        halo: hl,
+                        smooth_on: (e.beta > 0.0) as u32,
+                        beta: e.beta,
+                        pad: [0.0; 3],
+                        wb: match op {
+                            GpuOp::Develop(d) => d.wb,
+                            _ => [1.0; 4],
+                        },
+                    });
+                    info_b.push((n, (ew.div_ceil(16), eh.div_ceil(16)), round4(n as u64 * EDGE_PLANES * 4).max(16)));
+                }
+                let stride = (std::mem::size_of::<kernels::EdgeParams>() as u64)
+                    .div_ceil(limits.min_uniform_buffer_offset_alignment as u64)
+                    * limits.min_uniform_buffer_offset_alignment as u64;
+                let mut bytes = vec![0u8; stride as usize * eps.len()];
+                for (i, q) in eps.iter().enumerate() {
+                    let o = i * stride as usize;
+                    bytes[o..o + std::mem::size_of::<kernels::EdgeParams>()].copy_from_slice(bytemuck::bytes_of(q));
+                }
+                let tables = self.edge_table(e.period, || {
+                    let mut v: Vec<f32> = e.canon.iter().map(|&c| c as f32).collect();
+                    v.extend_from_slice(e.g0);
+                    v.extend_from_slice(e.dir);
+                    v
+                });
+                let scratch_bytes = info_b.iter().map(|b| b.2).max().unwrap_or(16);
+                let mk = |kernel| self.pipeline(PipelineKey { kernel, ..key });
+                let mut passes = vec![mk(Kernel::EdgeMosaic), mk(Kernel::EdgeG0), mk(Kernel::EdgeRgb)];
+                if e.period == 2 {
+                    passes.push(mk(Kernel::EdgeBayerD1));
+                    passes.push(mk(Kernel::EdgeBayerV2));
+                } else {
+                    passes.push(mk(Kernel::EdgeXtransV2));
+                }
+                Some(EdgeRun {
+                    params: buffer_init(dev, "flashraw.edge_params", &bytes, wgpu::BufferUsages::UNIFORM),
+                    stride,
+                    tables,
+                    scratch: self.acquire("flashraw.edge_scratch", scratch_bytes, wgpu::BufferUsages::STORAGE),
+                    bands: info_b,
+                    passes,
+                })
+            }
+            None => None,
+        };
 
         // ---- Bands: upload N+1 while N computes ----
         let t0 = flashraw_core::profile::now_ms();
@@ -755,6 +906,31 @@ impl GpuContext {
                 GpuOp::Normalize => grid_1d(params[i].total as u64),
                 GpuOp::Develop(_) => (p.dev_w.div_ceil(16), (b.y1 - b.y0).div_ceil(16)),
             };
+            let edge_bg = edge_run.as_ref().map(|er| {
+                dev.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("flashraw.edge"),
+                    layout: &self.edge_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &er.params,
+                                offset: i as u64 * er.stride,
+                                size: wgpu::BufferSize::new(std::mem::size_of::<kernels::EdgeParams>() as u64),
+                            }),
+                        },
+                        wgpu::BindGroupEntry { binding: 1, resource: er.tables.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &er.scratch,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(er.bands[i].2),
+                            }),
+                        },
+                    ],
+                })
+            });
             let mut enc = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("flashraw.band") });
             if let Some(st) = &slot.staging {
                 enc.copy_buffer_to_buffer(st, 0, &slot.src, 0, in_size);
@@ -768,8 +944,18 @@ impl GpuContext {
                         end_of_pass_write_index: Some(2 * i as u32 + 1),
                     }),
                 });
-                pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &bg, &[]);
+                if let (Some(er), Some(ebg)) = (&edge_run, &edge_bg) {
+                    pass.set_bind_group(1, ebg, &[]);
+                    let (n, (gx, gy), _) = er.bands[i];
+                    if n > 0 {
+                        for pl in &er.passes {
+                            pass.set_pipeline(pl);
+                            pass.dispatch_workgroups(gx, gy, 1);
+                        }
+                    }
+                }
+                pass.set_pipeline(&pipeline);
                 pass.dispatch_workgroups(groups.0, groups.1, 1);
             }
             if let Some((qs, resolve, read)) = ts.as_ref().filter(|_| i + 1 == bands.len()) {
@@ -801,6 +987,9 @@ impl GpuContext {
             }
             None => None,
         };
+        if let Some(er) = edge_run {
+            self.release(er.scratch);
+        }
         for s in slots {
             self.release(s.src);
             if let Some(st) = s.staging {

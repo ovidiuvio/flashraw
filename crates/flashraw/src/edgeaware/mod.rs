@@ -230,6 +230,23 @@ impl Plan {
         }
     }
 
+    /// The plan in the form the GPU kernels take (`flashraw_gpu::EdgeSpec`): the tables, where
+    /// the CFA sits in them and the smoothing weight.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_spec(&self) -> flashraw_gpu::EdgeSpec {
+        let t: &'static Tables = self.t;
+        flashraw_gpu::EdgeSpec {
+            period: t.period as u32,
+            cx: self.cx as u32,
+            cy: self.cy as u32,
+            beta: self.beta,
+            halo: HALO as u32,
+            canon: &t.canon,
+            g0: &t.g0,
+            dir: &t.dir,
+        }
+    }
+
     /// Estimate the noise of a frame of `w` x `h` samples and set the weight of the
     /// smoothing pass (module docs, step 5) from it. Deterministic and independent of any
     /// crop: 48 rows spread over the whole frame, so call it with the full frame's `fetch`.

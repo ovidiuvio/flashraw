@@ -94,24 +94,43 @@ fn workload(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Option<Workload> {
         output,
         resident: opts.output.is_gpu_resident(),
         bands: 1,
+        edge_aware: opts.demosaic == crate::Demosaic::EdgeAware,
     })
+}
+
+/// The edge-aware demosaic of a frame for the GPU kernels: the CPU plan (tables, CFA phase at
+/// `origin`) with the smoothing weight from the noise of the frame, `None` for anything the CPU
+/// edge-aware demosaic leaves to the bilinear one (several components per pixel, patterns that are
+/// neither Bayer nor X-Trans). `fetch(y, row)` fills `row` (`width` samples) with the normalised
+/// mosaic row `y`; `wb` is the balance of the mosaic (the green multiplier scales the noise).
+pub fn edge_spec(
+    info: &FrameInfo,
+    origin: (u32, u32),
+    (width, height): (usize, usize),
+    wb: [f32; 4],
+    fetch: &mut dyn FnMut(usize, &mut [f32]),
+) -> Option<flashraw_gpu::EdgeSpec> {
+    if info.cpp != 1 {
+        return None;
+    }
+    let mut plan = process::edge_plan(info.cfa.as_ref()?, origin)?;
+    plan.set_noise_from(width, height, wb[1], fetch);
+    Some(plan.gpu_spec())
 }
 
 /// Decide whether this decode runs on the GPU. `Ok(None)` = CPU path.
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The edge-aware demosaic, the neutral and blend highlight modes, the automatic white balance
-    // and camera profiles run on the CPU only.
-    if (opts.demosaic == crate::Demosaic::EdgeAware
-        || opts.highlights != crate::Highlights::Clip
+    // The highlight modes, the automatic white balance and camera profiles run on the CPU only.
+    if (opts.highlights != crate::Highlights::Clip
         || opts.white_balance != crate::WhiteBalanceMode::AsShot
         || opts.camera_profile.is_some())
         && !matches!(base, OutputFormat::RawU16 | OutputFormat::NormalizedF32)
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with the edge-aware demosaic, neutral/blend highlights, automatic white balance or a camera profile".into(),
+                "GPU-resident RGB output with highlight modes, automatic white balance or a camera profile".into(),
             ));
         }
         return Ok(None);
@@ -276,7 +295,10 @@ async fn run(
     let img: Option<RawImage>;
     let dctx = crate::decode_context(opts, profiler, threads > 1, cfg!(feature = "simd"));
     let (frame, decode_backend) = match &packed {
-        Some(p) => (GpuFrame::from_packed(p).with_window(win), format!("GPU unpack ({})", ctx.info().name)),
+        Some(p) => {
+            img = None;
+            (GpuFrame::from_packed(p).with_window(win), format!("GPU unpack ({})", ctx.info().name))
+        }
         None => {
             let (decoded, measured) = raw.decode_window(&dctx, win, profiler)?;
             if let Some(b) = measured {
@@ -327,7 +349,41 @@ async fn run(
                 opts.demosaic,
                 crop,
             ));
+            let edge = if opts.demosaic == crate::Demosaic::EdgeAware {
+                let size = (fw as usize, fh as usize);
+                match (&packed, &img) {
+                    (Some(p), _) => {
+                        // The kernels unpack on the GPU: unpack the few rows of the noise estimate here.
+                        let row_bytes = (p.width as usize * p.bits as usize).div_ceil(8);
+                        let mut samples = vec![0u16; p.width as usize];
+                        let mut fetch = |y: usize, out: &mut [f32]| {
+                            let r = win.y as usize + y;
+                            let start = (r * p.row_stride).min(p.data.len());
+                            let end = (start + row_bytes).min(p.data.len());
+                            flashraw_codecs::packed::unpack_row_scalar(
+                                &p.data[start..end],
+                                &mut samples,
+                                p.bits,
+                                p.order,
+                            );
+                            if let Ok(mut one) = RawImage::new_u16(fw, 1, 1, &flashraw_core::Limits::default()) {
+                                one.u16_mut().copy_from_slice(&samples[win.x as usize..win.x as usize + fw as usize]);
+                                process::normalizer(&one, &post_info, (win.x, win.y + y as u32)).normalize_row(0, out);
+                            }
+                        };
+                        edge_spec(&post_info, origin, size, params.wb, &mut fetch)
+                    }
+                    (None, Some(d)) => {
+                        let k = process::normalizer(d, &post_info, origin);
+                        edge_spec(&post_info, origin, size, params.wb, &mut |y, row| k.normalize_row(y, row))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            };
             GpuOp::Develop(DevelopSpec {
+                edge,
                 crop,
                 half_size: opts.demosaic == crate::Demosaic::HalfSize,
                 wb: params.wb,

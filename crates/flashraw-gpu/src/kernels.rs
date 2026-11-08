@@ -14,12 +14,27 @@ pub(crate) const NORMALIZE_WGSL: &str =
     concat!(include_str!("../shaders/common.wgsl"), "\n", include_str!("../shaders/normalize.wgsl"));
 pub(crate) const DEVELOP_WGSL: &str =
     concat!(include_str!("../shaders/common.wgsl"), "\n", include_str!("../shaders/develop.wgsl"));
+/// The edge-aware demosaic: `common.wgsl` + `develop.wgsl` (the encoder and the bilinear border
+/// share it) + `edge.wgsl`. Its entry points use the bind group 1 of [`EdgeParams`].
+pub(crate) const EDGE_WGSL: &str = concat!(
+    include_str!("../shaders/common.wgsl"),
+    "\n",
+    include_str!("../shaders/develop.wgsl"),
+    "\n",
+    include_str!("../shaders/edge.wgsl")
+);
 pub(crate) const TO_TEXTURE_WGSL: &str = include_str!("../shaders/to_texture.wgsl");
 
 /// WGSL sources of every kernel module, for embedding in other runtimes (e.g. a
 /// hand-written WebGPU pipeline in JavaScript). Each entry is `(name, source)`.
-pub fn wgsl_sources() -> [(&'static str, &'static str); 4] {
-    [("unpack", UNPACK_WGSL), ("normalize", NORMALIZE_WGSL), ("develop", DEVELOP_WGSL), ("to_texture", TO_TEXTURE_WGSL)]
+pub fn wgsl_sources() -> [(&'static str, &'static str); 5] {
+    [
+        ("unpack", UNPACK_WGSL),
+        ("normalize", NORMALIZE_WGSL),
+        ("develop", DEVELOP_WGSL),
+        ("edge", EDGE_WGSL),
+        ("to_texture", TO_TEXTURE_WGSL),
+    ]
 }
 
 /// Mirrors `struct Params` in `shaders/common.wgsl` (std140-compatible: 40 u32 then 5 vec4).
@@ -72,6 +87,27 @@ pub(crate) struct Params {
     pub m1: [f32; 4],
     pub m2: [f32; 4],
     pub levels: [f32; 4],
+}
+
+/// Mirrors `struct EdgeParams` in `shaders/edge.wgsl` (12 u32, 4 f32, one vec4: 80 bytes).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
+pub(crate) struct EdgeParams {
+    pub period: u32,
+    pub cx: u32,
+    pub cy: u32,
+    pub off_g0: u32,
+    pub off_dir: u32,
+    pub ex0: u32,
+    pub ey0: u32,
+    pub ew: u32,
+    pub eh: u32,
+    pub n: u32,
+    pub halo: u32,
+    pub smooth_on: u32,
+    pub beta: f32,
+    pub pad: [f32; 3],
+    pub wb: [f32; 4],
 }
 
 pub(crate) fn order_index(o: PackOrder) -> u32 {
@@ -324,6 +360,37 @@ mod tests {
             "m1",
             "m2",
             "levels",
+        ];
+        assert_eq!(names, expected);
+    }
+
+    #[test]
+    fn edge_params_layout_matches_wgsl() {
+        assert_eq!(std::mem::size_of::<EdgeParams>(), 80);
+        assert_eq!(std::mem::offset_of!(EdgeParams, wb), 64);
+        let src = include_str!("../shaders/edge.wgsl");
+        let start = src.find("struct EdgeParams {").unwrap();
+        let body = &src[start..start + src[start..].find('}').unwrap()];
+        let names: Vec<&str> =
+            body.lines().skip(1).filter_map(|l| l.trim().split(':').next()).filter(|n| !n.is_empty()).collect();
+        let expected = [
+            "period",
+            "cx",
+            "cy",
+            "off_g0",
+            "off_dir",
+            "ex0",
+            "ey0",
+            "ew",
+            "eh",
+            "n",
+            "halo",
+            "smooth_on",
+            "beta",
+            "pad0",
+            "pad1",
+            "pad2",
+            "wb",
         ];
         assert_eq!(names, expected);
     }

@@ -66,18 +66,38 @@ fn edge_aware_is_deterministic_and_differs_from_bilinear() {
     }
 }
 
+/// GPU requests: `Backend::Gpu` runs the edge-aware kernels when there is an adapter (the result is
+/// the CPU's within rounding, see `crates/flashraw-gpu/tests/edge_aware.rs`) and fails with
+/// `GpuUnavailable` otherwise (also without the `gpu` feature); `Backend::Auto` gives either.
 #[test]
-fn edge_aware_gpu_requests_fall_back_to_the_cpu() {
+fn edge_aware_gpu_requests_agree_with_the_cpu() {
     let Some(corpus) = corpus() else { return };
-    let path = corpus.join(FILES[0]);
-    if !path.exists() {
-        return;
+    for rel in FILES {
+        let path = corpus.join(rel);
+        if !path.exists() {
+            continue;
+        }
+        let raw = FlashRaw::open_path(&path).unwrap();
+        let want = raw
+            .decode(DecodeOptions { backend: Backend::Cpu, ..opts(OutputFormat::Rgba8, Demosaic::EdgeAware) })
+            .unwrap();
+        let want = want.as_u8().unwrap();
+        for backend in [Backend::Auto, Backend::Gpu] {
+            let got = match raw.decode(DecodeOptions { backend, ..opts(OutputFormat::Rgba8, Demosaic::EdgeAware) }) {
+                Ok(f) => f,
+                Err(flashraw::Error::GpuUnavailable(_)) if backend == Backend::Gpu => continue,
+                Err(e) => panic!("{rel} {backend:?}: {e}"),
+            };
+            let got = got.as_u8().unwrap();
+            assert_eq!(got.len(), want.len(), "{rel} {backend:?}");
+            let off = got.iter().zip(want).filter(|(a, b)| a != b).count();
+            assert!(got.iter().zip(want).all(|(a, b)| (*a as i32 - *b as i32).abs() <= 1), "{rel} {backend:?}");
+            assert!(off * 500 < got.len(), "{rel} {backend:?}: {off} of {} samples differ", got.len());
+        }
+        // GPU-resident output: a result with an adapter, `GpuUnavailable` without.
+        match raw.decode(opts(OutputFormat::GpuRgba8, Demosaic::EdgeAware)) {
+            Ok(_) | Err(flashraw::Error::GpuUnavailable(_)) => {}
+            Err(e) => panic!("{rel} GpuRgba8: {e}"),
+        }
     }
-    let raw = FlashRaw::open_path(&path).unwrap();
-    let cpu = raw.decode(DecodeOptions { backend: Backend::Cpu, ..opts(OutputFormat::Rgba8, Demosaic::EdgeAware) });
-    let gpu = raw.decode(DecodeOptions { backend: Backend::Auto, ..opts(OutputFormat::Rgba8, Demosaic::EdgeAware) });
-    assert!(cpu.unwrap().data == gpu.unwrap().data);
-    // GPU-resident outputs cannot fall back.
-    let r = raw.decode(opts(OutputFormat::GpuRgba8, Demosaic::EdgeAware));
-    assert!(r.is_err());
 }

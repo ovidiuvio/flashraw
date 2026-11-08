@@ -60,6 +60,29 @@ pub(crate) enum Kernel {
     Normalize,
     Develop,
     DevelopHalf,
+    /// Edge-aware demosaic passes (bind group 1, see `shaders/edge.wgsl`), in dispatch order.
+    EdgeMosaic,
+    EdgeG0,
+    EdgeRgb,
+    EdgeBayerD1,
+    EdgeBayerV2,
+    EdgeXtransV2,
+    EdgeDevelop,
+}
+
+impl Kernel {
+    fn is_edge(self) -> bool {
+        matches!(
+            self,
+            Kernel::EdgeMosaic
+                | Kernel::EdgeG0
+                | Kernel::EdgeRgb
+                | Kernel::EdgeBayerD1
+                | Kernel::EdgeBayerV2
+                | Kernel::EdgeXtransV2
+                | Kernel::EdgeDevelop
+        )
+    }
 }
 
 /// A specialised pipeline: kernel + override constants.
@@ -86,6 +109,11 @@ pub struct GpuContext {
     pub(crate) info: GpuAdapterInfo,
     pub(crate) layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
+    /// Bind group 1 of the edge-aware kernels: parameters, filter tables, scratch planes.
+    pub(crate) edge_layout: wgpu::BindGroupLayout,
+    edge_pipeline_layout: wgpu::PipelineLayout,
+    /// Filter tables of the edge-aware demosaic per CFA period (uploaded once).
+    edge_tables: Mutex<HashMap<u32, Arc<wgpu::Buffer>>>,
     pub(crate) tex_layout: wgpu::BindGroupLayout,
     tex_pipeline: OnceLock<wgpu::ComputePipeline>,
     modules: Mutex<HashMap<Kernel, wgpu::ShaderModule>>,
@@ -249,6 +277,15 @@ impl GpuContext {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
+        let edge_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("flashraw.edge"),
+            entries: &[uniform_entry(0), storage_entry(1, true), storage_entry(2, false)],
+        });
+        let edge_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("flashraw.edge"),
+            bind_group_layouts: &[Some(&layout), Some(&edge_layout)],
+            immediate_size: 0,
+        });
         let tex_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("flashraw.to_texture"),
             entries: &[
@@ -273,6 +310,9 @@ impl GpuContext {
             info,
             layout,
             pipeline_layout,
+            edge_layout,
+            edge_pipeline_layout,
+            edge_tables: Mutex::default(),
             tex_layout,
             tex_pipeline: OnceLock::new(),
             modules: Mutex::default(),
@@ -364,6 +404,8 @@ impl GpuContext {
                     Kernel::Unpack => ("flashraw.unpack", kernels::UNPACK_WGSL),
                     Kernel::Normalize => ("flashraw.normalize", kernels::NORMALIZE_WGSL),
                     Kernel::Develop | Kernel::DevelopHalf => ("flashraw.develop", kernels::DEVELOP_WGSL),
+                    k if k.is_edge() => ("flashraw.edge", kernels::EDGE_WGSL),
+                    _ => unreachable!("every kernel has a module"),
                 };
                 self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(label),
@@ -378,25 +420,33 @@ impl GpuContext {
         if let Some(p) = self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
             return p.clone();
         }
-        let module = self.module(key.kernel);
+        // All edge-aware kernels share one module.
+        let module = self.module(if key.kernel.is_edge() { Kernel::EdgeMosaic } else { key.kernel });
         let entry = match key.kernel {
             Kernel::Unpack => "unpack",
             Kernel::Normalize => "normalize",
             Kernel::Develop => "develop",
             Kernel::DevelopHalf => "develop_half",
+            Kernel::EdgeMosaic => "edge_mosaic",
+            Kernel::EdgeG0 => "edge_g0",
+            Kernel::EdgeRgb => "edge_rgb",
+            Kernel::EdgeBayerD1 => "edge_bayer_d1",
+            Kernel::EdgeBayerV2 => "edge_bayer_v2",
+            Kernel::EdgeXtransV2 => "edge_xtrans_v2",
+            Kernel::EdgeDevelop => "develop_edge",
         };
         let mut constants: Vec<(&str, f64)> = vec![
             ("INPUT_MODE", key.input_mode as f64),
             ("ORDER", key.order as f64),
             ("USE_LUT", if key.use_lut { 1.0 } else { 0.0 }),
         ];
-        if matches!(key.kernel, Kernel::Develop | Kernel::DevelopHalf) {
+        if matches!(key.kernel, Kernel::Develop | Kernel::DevelopHalf) || key.kernel.is_edge() {
             constants.push(("LAYOUT", key.layout as f64));
             constants.push(("OUT_MODE", key.out_mode as f64));
         }
         let p = self.device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some(entry),
-            layout: Some(&self.pipeline_layout),
+            layout: Some(if key.kernel.is_edge() { &self.edge_pipeline_layout } else { &self.pipeline_layout }),
             module: &module,
             entry_point: Some(entry),
             compilation_options: wgpu::PipelineCompilationOptions {
@@ -408,6 +458,23 @@ impl GpuContext {
         });
         self.pipelines.lock().unwrap_or_else(|e| e.into_inner()).insert(key, p.clone());
         p
+    }
+
+    /// The filter tables of the edge-aware demosaic for a CFA of `period` (2 Bayer, 6 X-Trans) as
+    /// `f32`: the canonical colours, then the `G0` filters, then the directional filters.
+    /// Uploaded on first use and kept.
+    pub(crate) fn edge_table(&self, period: u32, build: impl FnOnce() -> Vec<f32>) -> Arc<wgpu::Buffer> {
+        let mut m = self.edge_tables.lock().unwrap_or_else(|e| e.into_inner());
+        m.entry(period)
+            .or_insert_with(|| {
+                Arc::new(crate::run::buffer_init(
+                    &self.device,
+                    "flashraw.edge_tables",
+                    bytemuck::cast_slice(&build()),
+                    wgpu::BufferUsages::STORAGE,
+                ))
+            })
+            .clone()
     }
 
     pub(crate) fn tex_pipeline(&self) -> &wgpu::ComputePipeline {

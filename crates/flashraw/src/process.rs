@@ -1146,6 +1146,14 @@ fn kernel_with<'a>(
     k
 }
 
+/// The edge-aware plan of a single-component mosaic whose sample `(0, 0)` is at sensor position
+/// `origin` (what `Demosaic::EdgeAware` builds for the CPU), or `None` when the pattern is
+/// neither Bayer nor X-Trans.
+#[cfg(feature = "gpu")]
+pub(crate) fn edge_plan(cfa: &CfaPattern, origin: (u32, u32)) -> Option<edgeaware::Plan> {
+    edgeaware::Plan::new(cfa, &channel_map(None), origin_usize(origin))
+}
+
 fn origin_usize(o: (u32, u32)) -> (usize, usize) {
     (o.0 as usize, o.1 as usize)
 }

@@ -62,7 +62,13 @@ fn f16_bits(x: f32) -> u32 {
 
 // White balance, clip at sensor saturation, convert to linear sRGB, levels, store.
 fn finish(rgb_in: vec3<f32>, dx: u32, dy: u32) {
-    let rgb = clamp(rgb_in * P.wb.xyz, vec3<f32>(0.0), vec3<f32>(1.0));
+    finish_balanced(rgb_in * P.wb.xyz, dx, dy);
+}
+
+// `finish` for a pixel that is already white balanced (the edge-aware demosaic balances the
+// mosaic before interpolating).
+fn finish_balanced(rgb_bal: vec3<f32>, dx: u32, dy: u32) {
+    let rgb = clamp(rgb_bal, vec3<f32>(0.0), vec3<f32>(1.0));
     var r = P.m0.x * rgb.x + P.m0.y * rgb.y + P.m0.z * rgb.z;
     var g = P.m1.x * rgb.x + P.m1.y * rgb.y + P.m1.z * rgb.z;
     var b = P.m2.x * rgb.x + P.m2.y * rgb.y + P.m2.z * rgb.z;

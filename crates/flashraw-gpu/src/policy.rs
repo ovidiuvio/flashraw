@@ -99,6 +99,8 @@ pub struct Workload {
     /// Bands the frame is processed in on this device (1 = fits one storage binding;
     /// see [`GpuContext::estimate_bands`]).
     pub bands: u32,
+    /// The edge-aware demosaic instead of the bilinear one (RGB outputs).
+    pub edge_aware: bool,
 }
 
 impl Workload {
@@ -122,6 +124,12 @@ pub struct Decision {
     pub est_cpu_ms: f64,
     pub est_gpu_ms: f64,
 }
+
+/// Cost of the edge-aware demosaic relative to the bilinear one, for the develop step alone: on
+/// the CPU (measured 4x to 10x: x86-64 AVX2 and Apple M1 Ultra, Bayer and X-Trans) and on the
+/// GPU (measured 7x to 18x on an Apple M1 Ultra). Rounded; only the CPU/GPU ratio matters.
+pub const EDGE_CPU_FACTOR: f64 = 5.0;
+pub const EDGE_GPU_FACTOR: f64 = 10.0;
 
 /// Frames below this size stay on the CPU (fixed GPU overheads dominate).
 pub const MIN_GPU_SAMPLES: u64 = 2_000_000;
@@ -149,6 +157,11 @@ pub fn decide(class: AdapterClass, gpu: &GpuCalibration, cpu: &CpuCosts, w: &Wor
             let unpack = if w.packed { w.samples as f64 / cpu.unpack_px_per_ms } else { 0.0 };
             let (c, g) = if half_size {
                 (w.samples as f64 / cpu.develop_half_px_per_ms, w.samples as f64 / gpu.develop_half_px_per_ms)
+            } else if w.edge_aware {
+                (
+                    out_px as f64 / cpu.develop_px_per_ms * EDGE_CPU_FACTOR,
+                    w.samples as f64 / gpu.develop_px_per_ms * EDGE_GPU_FACTOR,
+                )
             } else {
                 (out_px as f64 / cpu.develop_px_per_ms, w.samples as f64 / gpu.develop_px_per_ms)
             };
@@ -247,6 +260,7 @@ impl GpuContext {
             orientation: Orientation::Normal,
             output: DevelopOutput::Rgba8,
             levels: None,
+            edge: None,
         });
         // Warm-up compiles the pipelines and faults in allocations.
         let warm = self.run(&frame, &info, &dev).await?;
@@ -334,7 +348,15 @@ mod tests {
 
     fn work(output: WorkOutput, packed: bool, mp: f64) -> Workload {
         let samples = (mp * 1e6) as u64;
-        Workload { samples, upload_bytes: samples * 14 / 8, packed, output, resident: false, bands: 1 }
+        Workload {
+            samples,
+            upload_bytes: samples * 14 / 8,
+            packed,
+            output,
+            resident: false,
+            bands: 1,
+            edge_aware: false,
+        }
     }
 
     #[test]
@@ -392,6 +414,16 @@ mod tests {
             &work(WorkOutput::Rgb { bytes_per_px: 4, half_size: false }, true, 45.0),
         );
         assert!(!d.use_gpu, "{d:?}");
+    }
+
+    #[test]
+    fn edge_aware_costs_more_on_both_sides() {
+        let g = GpuCalibration::defaults(AdapterClass::Discrete);
+        let w = work(WorkOutput::Rgb { bytes_per_px: 4, half_size: false }, true, 45.0);
+        let plain = decide(AdapterClass::Discrete, &g, &cpu(), &w);
+        let edge = decide(AdapterClass::Discrete, &g, &cpu(), &Workload { edge_aware: true, ..w });
+        assert!(edge.est_cpu_ms > plain.est_cpu_ms * 1.5, "{edge:?} {plain:?}");
+        assert!(edge.est_gpu_ms > plain.est_gpu_ms, "{edge:?} {plain:?}");
     }
 
     #[test]
