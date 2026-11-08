@@ -151,10 +151,26 @@ pub fn dcraw_process(d: &mut libraw_data_t, st: &mut State) -> c_int {
         data: PixelData::U16(data),
         float_max: None,
     };
-    let demosaic = if d.params.half_size != 0 && cfa.filters != 0 { Demosaic::HalfSize } else { Demosaic::Bilinear };
+    // `half_size` bins; an explicit interpolation quality (`user_qual` 1 or more: VNG, PPG, AHD,
+    // DCB, DHT, AAHD, Markesteijn) selects FlashRaw's edge-aware demosaic; the default (-1) and
+    // quality 0 stay bilinear.
+    let demosaic = if d.params.half_size != 0 && cfa.filters != 0 {
+        Demosaic::HalfSize
+    } else if d.params.user_qual >= 1 {
+        Demosaic::EdgeAware
+    } else {
+        Demosaic::Bilinear
+    };
     let crop = Rect::new(left, top, s.width as u32, s.height as u32);
     let mut params = DevelopParams::new(&info, demosaic, crop);
     params.orientation = Orientation::Normal;
+    // `highlight` 2 (blend) keeps the colour of pixels above white; 3 to 9 (reconstruct) fade
+    // clipped pixels to white instead of rebuilding them; 0 (clip) and 1 (unclip) clip.
+    params.highlights = match d.params.highlight {
+        2 => flashraw::Highlights::Blend,
+        3..=9 => flashraw::Highlights::Neutral,
+        _ => flashraw::Highlights::Clip,
+    };
     params.wb = info.white_balance.map_or([1.0; 4], |w| w.coeffs);
     let rgb_cam = if d.params.output_color == 0 || d.idata.colors > 3 {
         if d.params.output_color == 0 { [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] } else { params.cam_to_rgb }

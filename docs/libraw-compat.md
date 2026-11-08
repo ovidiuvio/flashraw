@@ -131,9 +131,10 @@ Decoding:
 
 Processing (`libraw_dcraw_process` + `libraw_dcraw_make_mem_image`):
 
-- Demosaicing is FlashRaw's bilinear interpolation (or 2x2 binning with `half_size`), whatever
-  `user_qual` says; there is no AHD/DCB/AAHD, no FBDD, no median filter, no chromatic aberration
-  correction, no dark frame or bad-pixel file, no Fuji rotation and no pixel-aspect stretch.
+- Demosaicing is FlashRaw's bilinear interpolation by default, its edge-aware demosaic when
+  `user_qual` is 1 or more (VNG, PPG, AHD, DCB, DHT, AAHD and Markesteijn all select the same one;
+  it is not those algorithms), or 2x2 binning with `half_size`; there is no FBDD, no median
+  filter, no chromatic aberration correction, no dark frame or bad-pixel file, no Fuji rotation and no pixel-aspect stretch.
 - White balance: `user_mul` if set, else a grey-world balance with `use_auto_wb` (8x8 blocks
   containing clipped samples are skipped), else `cam_mul` with `use_camera_wb` when the file
   records one, else the daylight `pre_mul`; multipliers are normalised to a minimum of 1.
@@ -141,7 +142,8 @@ Processing (`libraw_dcraw_process` + `libraw_dcraw_make_mem_image`):
   balance; this implementation uses `pre_mul` there. When `as_shot_wb_applied` is set,
   `use_camera_wb` uses unit multipliers, and without `use_camera_wb` / `use_auto_wb` the
   multipliers (`pre_mul` or `user_mul`) are divided by `cam_mul`, as LibRaw does.
-- Highlights are clipped (`highlight` modes are ignored). `adjust_maximum_thr`, `user_black`,
+- `highlight` 2 (blend) uses `Highlights::Blend` and 3 to 9 (reconstruct) use `Highlights::Neutral` (clipped
+  pixels fade to white; nothing is rebuilt); 0 and 1 clip. `adjust_maximum_thr`, `user_black`,
   `user_cblack`, `user_sat`, `bright`, `no_auto_bright`, `auto_bright_thr`, `gamm[0..1]`,
   `output_bps` (8/16), `user_flip` and `half_size` are honoured.
 - `output_color`: 0 (raw), 1 (sRGB), 2 (Adobe RGB), 5 (XYZ) and 8 (Rec. 2020) are supported;

@@ -152,6 +152,24 @@ fn typical_client_sequence() {
         assert!(auto < camera, "auto {auto} camera {camera}");
         h.d_mut().params.use_auto_wb = 0;
 
+        // An explicit interpolation quality selects the edge-aware demosaic: the same geometry,
+        // different pixels; quality 0 and the default (-1) stay bilinear.
+        let bytes = |h: &mut Handle| {
+            assert_eq!(libraw_dcraw_process(h.0), 0);
+            let img = libraw_dcraw_make_mem_image(h.0, null_mut());
+            let v = std::slice::from_raw_parts((*img).data.as_ptr(), (*img).data_size as usize).to_vec();
+            libraw_dcraw_clear_mem(img);
+            v
+        };
+        let bilinear = bytes(&mut h);
+        h.d_mut().params.user_qual = 0;
+        assert!(bytes(&mut h) == bilinear);
+        h.d_mut().params.user_qual = 3;
+        let edge = bytes(&mut h);
+        assert_eq!(edge.len(), bilinear.len());
+        assert!(edge != bilinear);
+        h.d_mut().params.user_qual = -1;
+
         // 16-bit output and a 90-degree flip swap the dimensions.
         h.d_mut().params.output_bps = 16;
         h.d_mut().params.user_flip = 6;

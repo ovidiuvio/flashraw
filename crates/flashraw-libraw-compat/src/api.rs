@@ -927,7 +927,7 @@ macro_rules! setter {
 }
 
 setter!(
-    /// `params.user_qual` (the interpolation quality is always bilinear here).
+    /// `params.user_qual` (1 or more selects FlashRaw's edge-aware demosaic, otherwise bilinear).
     libraw_set_demosaic, c_int, |p, value| p.user_qual = value
 );
 setter!(
@@ -951,7 +951,7 @@ setter!(
     libraw_set_bright, f32, |p, value| p.bright = value
 );
 setter!(
-    /// `params.highlight` (highlights are always clipped here).
+    /// `params.highlight` (2: blend, 3 to 9: fade to white, otherwise clipped).
     libraw_set_highlight, c_int, |p, value| p.highlight = value
 );
 setter!(
