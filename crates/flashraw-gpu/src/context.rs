@@ -279,7 +279,7 @@ impl GpuContext {
         });
         let edge_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("flashraw.edge"),
-            entries: &[uniform_entry(0), storage_entry(1, true), storage_entry(2, false)],
+            entries: &[uniform_entry(0), storage_entry(1, true), storage_entry(2, false), storage_entry(3, true)],
         });
         let edge_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("flashraw.edge"),

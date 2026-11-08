@@ -39,8 +39,11 @@ struct EdgeParams {
 
 @group(1) @binding(0) var<uniform> E: EdgeParams;
 // Canonical colours (0 R, 1 G, 2 B) of the period x period pattern, then the filters
-// (little-endian f32 tables of `crates/flashraw/src/edgeaware`).
+// (the f32 tables of `crates/flashraw/src/edgeaware`; `off_g0` and `off_dir` are multiples of 4).
 @group(1) @binding(1) var<storage, read> ftab: array<f32>;
+// The same buffer as vec4s, for the directional filters: per position and colour, per tap, the
+// coefficients of the four directions (the host transposes them).
+@group(1) @binding(3) var<storage, read> ftab4: array<vec4<f32>>;
 @group(1) @binding(2) var<storage, read_write> S: array<f32>;
 
 const EDGE_EPS: f32 = 1e-3;
@@ -189,16 +192,16 @@ fn edge_rgb(
     let own = u32(ftab[cr * p + q]);
     let m0 = select(0u, 1u, own == 0u);
     let m1 = select(2u, 1u, own == 2u);
-    let b0 = E.off_dir + ((cr * p + q) * 3u + m0) * 196u;
-    let b1 = E.off_dir + ((cr * p + q) * 3u + m1) * 196u;
+    let b0 = E.off_dir / 4u + ((cr * p + q) * 3u + m0) * 49u;
+    let b1 = E.off_dir / 4u + ((cr * p + q) * 3u + m1) * 49u;
     var a0 = vec4<f32>(0.0);
     var a1 = vec4<f32>(0.0);
     for (var ty = 0u; ty < 7u; ty++) {
         for (var tx = 0u; tx < 7u; tx++) {
             let tap = ty * 7u + tx;
             let v = tm[(l.y + ty) * 22u + l.x + tx];
-            a0 += vec4<f32>(ftab[b0 + tap], ftab[b0 + 49u + tap], ftab[b0 + 98u + tap], ftab[b0 + 147u + tap]) * v;
-            a1 += vec4<f32>(ftab[b1 + tap], ftab[b1 + 49u + tap], ftab[b1 + 98u + tap], ftab[b1 + 147u + tap]) * v;
+            a0 += ftab4[b0 + tap] * v;
+            a1 += ftab4[b1 + tap] * v;
         }
     }
     let idx = i * E.ew + j;

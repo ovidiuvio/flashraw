@@ -826,7 +826,12 @@ impl GpuContext {
                 let tables = self.edge_table(e.period, || {
                     let mut v: Vec<f32> = e.canon.iter().map(|&c| c as f32).collect();
                     v.extend_from_slice(e.g0);
-                    v.extend_from_slice(e.dir);
+                    // [position][colour][direction][tap] -> [position][colour][tap][direction], so
+                    // that the four directions of a tap are one vec4.
+                    for pc in 0..table as usize * 3 {
+                        let f = &e.dir[pc * 196..(pc + 1) * 196];
+                        v.extend((0..49 * 4).map(|i| f[(i % 4) * 49 + i / 4]));
+                    }
                     v
                 });
                 let scratch_bytes = info_b.iter().map(|b| b.2).max().unwrap_or(16);
@@ -920,6 +925,7 @@ impl GpuContext {
                             }),
                         },
                         wgpu::BindGroupEntry { binding: 1, resource: er.tables.as_entire_binding() },
+                        wgpu::BindGroupEntry { binding: 3, resource: er.tables.as_entire_binding() },
                         wgpu::BindGroupEntry {
                             binding: 2,
                             resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {

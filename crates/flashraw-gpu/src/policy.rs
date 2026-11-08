@@ -126,10 +126,11 @@ pub struct Decision {
 }
 
 /// Cost of the edge-aware demosaic relative to the bilinear one, for the develop step alone: on
-/// the CPU (measured 4x to 10x: x86-64 AVX2 and Apple M1 Ultra, Bayer and X-Trans) and on the
-/// GPU (measured 7x to 18x on an Apple M1 Ultra). Rounded; only the CPU/GPU ratio matters.
+/// the CPU (measured 4.4x to 9.2x: Apple M1 Ultra, X-Trans and Bayer; 3.7x to 5.5x on x86-64) and
+/// on the GPU (measured 6.2x to 6.3x on an Apple M1 Ultra, kernel time). Rounded; only the
+/// CPU/GPU ratio matters.
 pub const EDGE_CPU_FACTOR: f64 = 5.0;
-pub const EDGE_GPU_FACTOR: f64 = 10.0;
+pub const EDGE_GPU_FACTOR: f64 = 6.0;
 
 /// Frames below this size stay on the CPU (fixed GPU overheads dominate).
 pub const MIN_GPU_SAMPLES: u64 = 2_000_000;
