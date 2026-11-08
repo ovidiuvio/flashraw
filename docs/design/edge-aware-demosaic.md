@@ -28,17 +28,22 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    CFA position (4 for Bayer, 36 for X-Trans), colour and direction. The measured colour is kept as is. Every
    filter sums to one, so a flat field stays flat.
 4. **False-colour suppression.** Isolated coloured dots go; green (luminance) detail and the measured samples are
-   untouched. Bayer: each missing red or blue is the green plus the weighted mean of the differences `R - G`
-   (or `B - G`) measured at the red (blue) sites of the 3x3 window, a site weighing `exp(-((G_site - G) / s)^2)`
-   with `s = 0.3 G + 0.02` (on the white-balanced, normalised mosaic), so that colour does not leak across a
-   luminance edge. X-Trans: `R - G` and `B - G` are replaced by their 3x3 median (the usual colour-difference
-   median of classical demosaics). Both cost some colour resolution at fine saturated edges.
+   untouched. Bayer, two passes: each missing red or blue is the green plus the weighted mean of the differences
+   `R - G` (or `B - G`) measured at the red (blue) sites of the 3x3 window, a site weighing `1 / (1 + e^2)` with
+   `e = (G_site - G) / s` and `s = 0.2 G + 0.015` (on the white-balanced, normalised mosaic), so that colour does
+   not leak across a luminance edge; then the same over the differences of every pixel of the 3x3 window (measured
+   and pass-1 values) with `s = 0.1 G + 0.007`. X-Trans: `R - G` and `B - G` are replaced by their 3x3 median (the
+   usual colour-difference median of classical demosaics). Both cost some colour resolution at fine saturated
+   edges. Choosing the Bayer stage: a 3x3 median on the full differences left the real-file speckle at 2.99 on the
+   index below; a single gated pass of measured differences brought it to 2.08 but gave back 0.1 to 0.7 dB of
+   photo edge PSNR (it discards the filters' own estimate); the second pass over all pixels gets 1.98 and brings
+   the PSNR back, 0.8 dB above the median on synthetic edges.
 
-Support is 6 pixels around each output pixel (3 for the filter, 2 for the weights' gradients, 1 for the chroma stage).
+Support is 7 pixels around each output pixel on Bayer (3 for the filter, 2 for the weights' gradients, 2 for the two chroma passes; 6 on X-Trans, whose median is one pass).
 The develop runs in bands of 32 output rows plus that halo, so memory stays bounded for any size (a few MB per
 thread), and every pixel is computed by the same operations in the same order whatever the band, thread count,
 crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). Pixels
-closer than 6 samples to the frame border use bilinear.
+closer than 7 samples to the frame border use bilinear.
 
 A 4-wide `f32` accumulate over contiguous per-phase planes keeps the cost to a few times bilinear:
 
@@ -46,8 +51,8 @@ A 4-wide `f32` accumulate over contiguous per-phase planes keeps the cost to a f
 |---|---|---|
 | 39.8 MP X-Trans, 1 thread | 0.94 s | 3.5 s |
 | 39.8 MP X-Trans, 16 threads | 0.11 s | 0.59 s |
-| 18 MP Bayer, 1 thread | 0.12 s | 1.1 s |
-| 18 MP Bayer, 16 threads | 0.02 s | 0.21 s |
+| 18 MP Bayer, 1 thread | 0.12 s | 1.2 s |
+| 18 MP Bayer, 16 threads | 0.02 s | 0.23 s |
 
 ## Where the filters come from
 
@@ -80,12 +85,12 @@ average (bilinear for Bayer is slightly different, see the table note):
 | | clean mosaic | noisy mosaic |
 |---|---|---|
 | Bayer: 3x3 average | 37.05 / 31.34 | 34.22 / 29.53 |
-| Bayer: edge-aware | 37.01 / 31.65 | 33.49 / 29.26 |
+| Bayer: edge-aware | 37.55 / 32.20 | 33.98 / 29.81 |
 | X-Trans: 3x3 average | 36.23 / 30.28 | 33.63 / 28.74 |
 | X-Trans: edge-aware | 37.20 / 31.72 | 33.67 / 29.39 |
 
 PSNR against clean references understates the main effect, which is the removal of isolated coloured dots and
-zipper patterns (step 4 trades a little fidelity for that: without it Bayer clean would be 37.7 / 32.1 and
+zipper patterns (step 4 trades a little fidelity for that: without it Bayer clean would be 37.7 over all pixels and
 X-Trans 37.95 / 32.3). On the file of issue #3 (Fujifilm X-T50, DSCF0120.RAF) the chroma high-frequency index of the
 issue (mean Laplacian of R-G and B-G over the Laplacian of luma, of the sRGB-encoded 16-bit output) goes from
 4.29 with bilinear to 2.25.

@@ -18,10 +18,11 @@
 //!
 //! 4. the colour differences R-G and B-G are cleaned, so that isolated coloured dots (the
 //!    main artefact of sparse red and blue sites) disappear and green (luminance) detail is
-//!    untouched. X-Trans: their 3x3 median. Bayer: each missing red or blue is the green
-//!    plus the weighted mean of the differences measured at the red or blue sites of the 3x3
-//!    window, a site counting `exp(-((G_site - G) / s)^2)` with `s = 0.3 G + 0.02`, so that
-//!    colour does not leak across a luminance edge.
+//!    untouched. X-Trans: their 3x3 median. Bayer, two passes: each missing red or blue is
+//!    the green plus the weighted mean of the differences measured at the red or blue sites
+//!    of the 3x3 window, a site counting `1 / (1 + ((G_site - G) / s)^2)` with
+//!    `s = 0.2 G + 0.015`, so that colour does not leak across a luminance edge; then the
+//!    same over the differences of all pixels of the 3x3 window with `s = 0.1 G + 0.007`.
 //!
 //! The mosaic is white balanced before the filters see it, so the colour channels have
 //! comparable levels (as in the training data).
@@ -42,8 +43,9 @@ const EPS: f32 = 1e-3;
 /// Mosaic samples needed around a pixel by the filters: the 7x7 filter reaches 3, and the
 /// weights need `G0` two pixels further (gradient, then 3x3 sum) which itself reaches 3.
 const CORE_HALO: usize = R + 2;
-/// Mosaic samples needed around a pixel: the filters, plus one for the chroma median.
-pub(crate) const HALO: usize = CORE_HALO + 1;
+/// Mosaic samples needed around a pixel: the filters, plus two for the Bayer chroma stage
+/// (X-Trans needs one, for its median).
+pub(crate) const HALO: usize = CORE_HALO + 2;
 /// Output rows per band: bounds the working memory (a few MB at 8000 columns).
 pub(crate) const BAND_ROWS: usize = 32;
 
@@ -149,6 +151,9 @@ impl Plan {
     ) {
         let (nr, nc) = (y1 - y0, xb - xa);
         debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w && out.len() == nr * nc);
+        if self.t.period == 2 {
+            return self.develop_bayer(w, (y0, y1), (xa, xb), wb, fetch, out);
+        }
         // One pixel more on every side for the 3x3 medians.
         let (er, ec) = (nr + 2, nc + 2);
         let mut rgb: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0f32; er * ec]);
@@ -164,50 +169,101 @@ impl Plan {
         for i in 0..nr {
             let cr = (y0 + i + self.cy) % p;
             let o = &mut out[i * nc..(i + 1) * nc];
-            if p == 2 {
-                // Bayer: gated colour-difference interpolation over the 3x3 window.
-                let crow = [(cr + p - 1) % p, cr, (cr + 1) % p];
-                for (j, px) in o.iter_mut().enumerate() {
-                    let c = (i + 1) * ec + j + 1;
-                    let own = t.canon[cr * p + (xa + j + self.cx) % p] as usize;
-                    let gc = g[c];
-                    let inv = 1.0 / (0.3 * gc.max(0.0) + 0.02);
-                    let mut v = [r[c], gc, bl[c]];
-                    for ch in [0usize, 2] {
-                        if own == ch {
-                            continue;
-                        }
-                        let plane = if ch == 0 { r } else { bl };
-                        let (mut sw, mut sd, mut su, mut n) = (0f32, 0f32, 0f32, 0f32);
-                        for (dy, &rc) in crow.iter().enumerate() {
-                            for dx in 0..3 {
-                                if t.canon[rc * p + (xa + j + dx + self.cx + p - 1) % p] as usize != ch {
-                                    continue;
-                                }
-                                let k = (i + dy) * ec + j + dx;
-                                let d = plane[k] - g[k];
-                                let e = (g[k] - gc) * inv;
-                                let w = (-e * e).exp();
-                                sw += w;
-                                sd += w * d;
-                                su += d;
-                                n += 1.0;
-                            }
-                        }
-                        // Every 3x3 window holds at least two sites of each colour; the
-                        // plain mean is the fallback when every weight underflows.
-                        v[ch] = gc + if sw > 1e-12 { sd / sw } else { su / n };
-                    }
-                    *px = v;
-                }
-                continue;
-            }
             median_row(&rg, ec, i, &mut mr);
             median_row(&bg, ec, i, &mut mb);
             for (j, px) in o.iter_mut().enumerate() {
                 let c = (i + 1) * ec + j + 1;
                 let own = t.canon[cr * p + (xa + j + self.cx) % p];
                 *px = [if own == 0 { r[c] } else { g[c] + mr[j] }, g[c], if own == 2 { bl[c] } else { g[c] + mb[j] }];
+            }
+        }
+    }
+
+    /// Bayer: the filters, then the two-pass luminance-gated chroma stage (module docs, step 4).
+    /// Same contract as [`Plan::develop`].
+    fn develop_bayer(
+        &self,
+        w: usize,
+        (y0, y1): (usize, usize),
+        (xa, xb): (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut [[f32; 3]],
+    ) {
+        let t = self.t;
+        let (nr, nc) = (y1 - y0, xb - xa);
+        // Two pixels more on every side: one for each 3x3 pass.
+        let (er, ec) = (nr + 4, nc + 4);
+        let mut rgb: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0f32; er * ec]);
+        self.demosaic(w, (y0 - 2, y1 + 2), (xa - 2, xb + 2), wb, fetch, &mut rgb);
+        let [r, g, bl] = &rgb;
+        // Channel at plane position (iy, ix): the plane starts two pixels before (y0, xa), so
+        // the parity of the position in the frame is that of (iy + y0, ix + xa).
+        let (py, px) = ((y0 + self.cy) % 2, (xa + self.cx) % 2);
+        let colour = |iy: usize, ix: usize| t.canon[((iy + py) % 2) * 2 + (ix + px) % 2] as usize;
+        // Pass 1, over the core plus one pixel: green plus the gated mean of the measured
+        // differences of the 3x3 window. `d1[ch / 2]` holds the colour difference (R-G, B-G).
+        let (e1r, e1c) = (nr + 2, nc + 2);
+        let mut d1 = [vec![0f32; e1r * e1c], vec![0f32; e1r * e1c]];
+        for i in 0..e1r {
+            for j in 0..e1c {
+                let c = (i + 1) * ec + j + 1;
+                let own = colour(i + 1, j + 1);
+                let gc = g[c];
+                let inv = 1.0 / (0.2 * gc.max(0.0) + 0.015);
+                for ch in [0usize, 2] {
+                    let plane = if ch == 0 { r } else { bl };
+                    d1[ch / 2][i * e1c + j] = if own == ch {
+                        plane[c] - gc
+                    } else {
+                        let (mut sw, mut sd, mut su, mut n) = (0f32, 0f32, 0f32, 0f32);
+                        for dy in 0..3 {
+                            for dx in 0..3 {
+                                if colour(i + dy, j + dx) != ch {
+                                    continue;
+                                }
+                                let k = (i + dy) * ec + j + dx;
+                                let d = plane[k] - g[k];
+                                let e = (g[k] - gc) * inv;
+                                let wt = 1.0 / (1.0 + e * e);
+                                sw += wt;
+                                sd += wt * d;
+                                su += d;
+                                n += 1.0;
+                            }
+                        }
+                        // Every 3x3 window holds at least two sites of each colour, and every
+                        // weight is at least 1 / (1 + e^2) > 0; the mean is a safeguard.
+                        if sw > 1e-12 { sd / sw } else { su / n }
+                    };
+                }
+            }
+        }
+        // Pass 2, over the core: the same gate over the differences of every pixel (measured
+        // and pass-1 values), for the two colours the pixel does not measure.
+        for i in 0..nr {
+            for j in 0..nc {
+                let c = (i + 2) * ec + j + 2;
+                let own = colour(i + 2, j + 2);
+                let gc = g[c];
+                let inv = 1.0 / (0.1 * gc.max(0.0) + 0.007);
+                let mut v = [r[c], gc, bl[c]];
+                for ch in [0usize, 2] {
+                    if own == ch {
+                        continue;
+                    }
+                    let (mut sw, mut sd) = (0f32, 0f32);
+                    for dy in 0..3 {
+                        for dx in 0..3 {
+                            let e = (g[(i + dy + 1) * ec + j + dx + 1] - gc) * inv;
+                            let wt = 1.0 / (1.0 + e * e);
+                            sw += wt;
+                            sd += wt * d1[ch / 2][(i + dy) * e1c + j + dx];
+                        }
+                    }
+                    v[ch] = gc + sd / sw;
+                }
+                out[i * nc + j] = v;
             }
         }
     }

@@ -7,7 +7,7 @@ colour filter array (2x2 Bayer, 6x6 X-Trans). For every pixel
   2. the squared gradients of sqrt(G0) along four directions (horizontal, vertical and the
      two diagonals), summed over 3x3, give four weights w_d = 1 / (E_d + EPS)^2 (normalised),
   3. each missing colour is sum_d w_d * (7x7 filter_d applied to the mosaic),
-  4. Bayer: missing R and B = G + luminance-gated mean of the measured R-G / B-G in the 3x3 window; X-Trans: R-G and B-G
+  4. Bayer: missing R and B = G + luminance-gated mean of the R-G / B-G of the 3x3 window, in two passes; X-Trans: R-G and B-G
      replaced by their 3x3 median; measured samples kept (not trained, see `chroma_stage`).
 The filters are the least-squares solution (ridge regularised) that reconstructs ground truth
 images from their re-mosaicked version, with the weights held fixed, so everything stays one
@@ -26,6 +26,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view as swv
 
 K, D, EPS = 7, 4, 1e-3
+GW = 0.0   # least squares row weight (green of the truth)^-GW; 0.58 weighs errors as the sRGB encoding does
 # Sensor noise simulated on the training mosaics: variance = a * value + b (white balanced
 # linear units), clean images plus two noise levels, so that the filters also smooth chroma noise.
 NOISES = ((0.0, 0.0), (4e-4, 1e-5), (1.5e-3, 2e-5))
@@ -109,6 +110,9 @@ def fit(images, pat, featfn, nd, ridge=1e-4, noises=((0.0, 0.0),)):
                 rel = pt[:, others] - pt[:, centre:centre + 1]
                 X = (ww[:, :, None] * rel[:, None, :]).reshape(len(pt), -1).astype(np.float32)
                 tt = T[sy::P, sx::P].reshape(-1, 3) - pt[:, centre:centre + 1]
+                if GW:
+                    sw = (np.maximum(T[sy::P, sx::P].reshape(-1, 3)[:, 1], 0.01) ** -GW).astype(np.float32)
+                    X = X * sw[:, None]; tt = tt * sw[:, None]
                 i = py * P + px
                 XtX[i] += X.T @ X
                 Xty[i] += (X.T @ tt).T
@@ -165,24 +169,29 @@ def chroma_median(o, cm):
     return np.stack([r, G, b], -1)
 
 def chroma_gated(o, cm):
-    """Bayer step 4: each missing R or B is G plus the mean of the measured differences (R-G or B-G) at the R or B
-    sites of the 3x3 window, a site weighing exp(-((G_site - G) / s)^2) with s = 0.3 G + 0.02. Mirrors Rust."""
+    """Bayer step 4, two passes (mirrors Rust). Pass 1: each missing R or B is G plus the mean of the measured
+    differences (R-G or B-G) at the R or B sites of the 3x3 window, a site weighing 1 / (1 + e^2) with
+    e = (G_site - G) / (0.2 G + 0.015). Pass 2: the same over the differences of every pixel of the window,
+    with s = 0.1 G + 0.007. Measured samples are kept."""
     G = o[..., 1]
     H, W = G.shape
     pg = np.pad(G, 1, mode='edge')
-    c = G; s = 0.3 * np.maximum(c, 0) + 0.02
+    def window(a):
+        p = np.pad(a, 1, mode='edge')
+        return [p[dy:dy + H, dx:dx + W] for dy in range(3) for dx in range(3)]
+    gs = window(G)
+    def gate(sr, sa):
+        s = sr * np.maximum(G, 0) + sa
+        return [1.0 / (1.0 + ((g - G) / s) ** 2) for g in gs]
+    w1, w2 = gate(0.2, 0.015), gate(0.1, 0.007)
     out = [o[..., 0], G, o[..., 2]]
     for ch in (0, 2):
         site = (cm == ch)
-        pd = np.pad(np.where(site, o[..., ch] - G, 0.0), 1, mode='edge')
-        ps = np.pad(site.astype(np.float32), 1, mode='edge')
-        sw = sd = 0.0
-        for dy in range(3):
-            for dx in range(3):
-                gs = pg[dy:dy + H, dx:dx + W]
-                w = ps[dy:dy + H, dx:dx + W] * np.exp(-(((gs - c) / s) ** 2))
-                sw = sw + w; sd = sd + w * pd[dy:dy + H, dx:dx + W]
-        out[ch] = np.where(site, o[..., ch], G + sd / np.maximum(sw, 1e-12))
+        ps = window(site.astype(np.float32)); pd = window(np.where(site, o[..., ch] - G, 0.0))
+        sw = sum(w * s_ for w, s_ in zip(w1, ps)); sd = sum(w * s_ * d for w, s_, d in zip(w1, ps, pd))
+        d1 = np.where(site, o[..., ch] - G, sd / np.maximum(sw, 1e-12))
+        sw2 = sum(w2); sd2 = sum(w * d for w, d in zip(w2, window(d1)))
+        out[ch] = np.where(site, o[..., ch], G + sd2 / sw2)
     return np.stack(out, -1)
 
 def chroma_stage(o, cm, pat):
