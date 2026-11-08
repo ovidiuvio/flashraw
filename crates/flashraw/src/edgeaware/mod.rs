@@ -150,6 +150,41 @@ impl Plan {
     pub(crate) fn develop(
         &self,
         w: usize,
+        rows: (usize, usize),
+        cols: (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut [[f32; 3]],
+    ) {
+        // The same source compiled for AVX2 (without FMA: every lane performs the same
+        // multiplies and adds in the same order, so results are bit-identical to the baseline
+        // build on any CPU) gives 8-wide vectors in the filter loops.
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU supports AVX2 (checked above).
+            return unsafe { self.develop_avx2(w, rows, cols, wb, fetch, out) };
+        }
+        self.develop_impl(w, rows, cols, wb, fetch, out)
+    }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[target_feature(enable = "avx2")]
+    unsafe fn develop_avx2(
+        &self,
+        w: usize,
+        rows: (usize, usize),
+        cols: (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut [[f32; 3]],
+    ) {
+        self.develop_impl(w, rows, cols, wb, fetch, out)
+    }
+
+    #[inline(always)]
+    fn develop_impl(
+        &self,
+        w: usize,
         (y0, y1): (usize, usize),
         (xa, xb): (usize, usize),
         wb: &[f32; 4],
@@ -225,6 +260,7 @@ impl Plan {
 
     /// Bayer: the filters, the two-pass luminance-gated chroma stage and, on a noisy frame, a
     /// gated smoothing (module docs, steps 4 and 5). Same contract as [`Plan::develop`].
+    #[inline(always)]
     fn develop_bayer(
         &self,
         w: usize,
@@ -343,6 +379,7 @@ impl Plan {
 
     /// The filters over `y0..y1` x `xa..xb`, into three planes of `(y1-y0) * (xb-xa)`; needs
     /// `CORE_HALO` samples around.
+    #[inline(always)]
     fn demosaic(
         &self,
         w: usize,
@@ -661,6 +698,40 @@ mod tests {
         for px in run(&plan, w, h, &flat, (HALO, h - HALO), (HALO, w - HALO)) {
             for c in px {
                 assert!((c - 0.3).abs() < 1e-5, "{px:?}");
+            }
+        }
+    }
+
+    /// The AVX2 build of the develop must give exactly the baseline's bits.
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    fn avx2_develop_is_bit_identical_to_the_baseline() {
+        if !std::arch::is_x86_feature_detected!("avx2") {
+            return;
+        }
+        let (w, h) = (90, 60);
+        let mut s = 4242u32;
+        let m: Vec<f32> = (0..w * h)
+            .map(|_| {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                (s >> 8) as f32 / (1u32 << 24) as f32
+            })
+            .collect();
+        for (name, cfa) in patterns() {
+            let mut plan = Plan::new(&cfa, &chan(), (0, 0)).unwrap();
+            for beta in [0.0, 0.4] {
+                plan.beta = beta;
+                let (y, x) = ((HALO, h - HALO), (HALO, w - HALO));
+                let mut a = vec![[0f32; 3]; (y.1 - y.0) * (x.1 - x.0)];
+                let mut b = a.clone();
+                let mut fetch = |yy: usize, row: &mut [f32]| row.copy_from_slice(&m[yy * w..(yy + 1) * w]);
+                plan.develop_impl(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut a);
+                // SAFETY: AVX2 was detected above.
+                unsafe { plan.develop_avx2(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut b) };
+                assert!(
+                    a.iter().zip(&b).all(|(p, q)| p.iter().zip(q).all(|(u, v)| u.to_bits() == v.to_bits())),
+                    "{name} {beta}"
+                );
             }
         }
     }
