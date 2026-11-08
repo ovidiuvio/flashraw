@@ -326,8 +326,9 @@ impl RawFile {
         let dm = Demosaic::parse(demosaic).ok_or_else(|| {
             invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size or edge-aware)"))
         })?;
-        let hl = Highlights::parse(highlights)
-            .ok_or_else(|| invalid(py, format!("unknown highlights {highlights:?} (expected clip or neutral)")))?;
+        let hl = Highlights::parse(highlights).ok_or_else(|| {
+            invalid(py, format!("unknown highlights {highlights:?} (expected clip, neutral or blend)"))
+        })?;
         let policy = CorruptionPolicy::parse(corruption_policy).ok_or_else(|| {
             invalid(py, format!("unknown `corruption_policy` {corruption_policy:?} (expected recover or strict)"))
         })?;

@@ -527,10 +527,11 @@ export interface DecodeOptions {
   demosaic?: 'bilinear' | 'half-size' | 'edge-aware';
   /**
    * Clipped highlights of RGB outputs. `clip` (default) clamps each channel, leaving a colour
-   * cast on partly clipped pixels; `neutral` fades pixels at or near sensor saturation to white
-   * (CPU only: the WebGPU build falls back to the CPU for it).
+   * cast on partly clipped pixels; `neutral` fades pixels at or near sensor saturation to white;
+   * `blend` also scales pixels that exceed the white level after white balance down together,
+   * which keeps their colour (CPU only: the WebGPU build falls back to the CPU for them).
    */
-  highlights?: 'clip' | 'neutral';
+  highlights?: 'clip' | 'neutral' | 'blend';
   /**
    * RGB outputs: crop to the default crop (default true). Raw outputs (`raw-u16`, `raw-f32`,
    * `normalized`) are never cropped by `true`; `'active'` crops them to `frameInfo.activeArea`

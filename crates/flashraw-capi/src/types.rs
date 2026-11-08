@@ -73,6 +73,9 @@ pub enum flashraw_highlights {
     /// Fade pixels at or near sensor saturation to white. CPU only (the GPU backend decodes on
     /// the CPU for it).
     FLASHRAW_HIGHLIGHTS_NEUTRAL = 1,
+    /// Scale pixels that exceed the white level after white balance down together (keeps their
+    /// colour); pixels at or near sensor saturation fade to white. CPU only.
+    FLASHRAW_HIGHLIGHTS_BLEND = 2,
 }
 
 /// Behaviour on truncated or corrupt sensor data (`flashraw_decode_options.corruption_policy`).
@@ -619,6 +622,7 @@ pub(crate) fn highlights_from(v: i32) -> FfiResult<flashraw::Highlights> {
     Ok(match v {
         0 => flashraw::Highlights::Clip,
         1 => flashraw::Highlights::Neutral,
+        2 => flashraw::Highlights::Blend,
         _ => return Err(FfiError::invalid(format!("unknown highlights {v}"))),
     })
 }

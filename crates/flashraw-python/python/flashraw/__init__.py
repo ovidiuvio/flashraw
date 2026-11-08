@@ -559,8 +559,9 @@ class RawFile:
             intent: rendering intent for ``output_profile``: ``"perceptual"`` (default),
                 ``"relative"``, ``"saturation"`` or ``"absolute"``.
             black_point_compensation: black point compensation for ``output_profile``.
-            highlights: ``"clip"`` (default) or ``"neutral"``: fade pixels at or near sensor
-                saturation to white instead of leaving a colour cast (CPU only).
+            highlights: ``"clip"`` (default), ``"neutral"`` (fade pixels at or near sensor
+                saturation to white instead of leaving a colour cast) or ``"blend"`` (the same,
+                and pixels above white after white balance keep their colour) (CPU only).
         """
         t0 = time.perf_counter()
         array, info = self._native.decode(

@@ -247,6 +247,11 @@ enum flashraw_highlights
      * the CPU for it).
      */
     FLASHRAW_HIGHLIGHTS_NEUTRAL = 1,
+    /**
+     * Scale pixels that exceed the white level after white balance down together (keeps their
+     * colour); pixels at or near sensor saturation fade to white. CPU only.
+     */
+    FLASHRAW_HIGHLIGHTS_BLEND = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

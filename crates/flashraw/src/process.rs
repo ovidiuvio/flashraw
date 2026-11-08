@@ -413,7 +413,7 @@ impl DevelopParams {
     }
 }
 
-/// Normalised level (per channel, before white balance) where [`Highlights::Neutral`] starts
+/// Normalised level (per channel, before white balance) where [`Highlights::Neutral`] and [`Highlights::Blend`] start
 /// fading a pixel to white; it is fully white at 1, the sensor's saturation.
 const NEUTRAL_START: f32 = 0.95;
 
@@ -426,10 +426,19 @@ pub(crate) fn finish_rgb(
     levels: Option<Levels>,
     highlights: Highlights,
 ) -> [f32; 3] {
-    let mut r = (rgb[0] * wb[0]).clamp(0.0, 1.0);
-    let mut g = (rgb[1] * wb[1]).clamp(0.0, 1.0);
-    let mut b = (rgb[2] * wb[2]).clamp(0.0, 1.0);
-    if highlights == Highlights::Neutral {
+    let (mut r, mut g, mut b);
+    if highlights == Highlights::Blend {
+        // Scale the balanced pixel down together when a channel exceeds the white level, so the
+        // ratios between the channels (the colour) survive; below it nothing changes.
+        let u = [(rgb[0] * wb[0]).max(0.0), (rgb[1] * wb[1]).max(0.0), (rgb[2] * wb[2]).max(0.0)];
+        let k = 1.0 / u[0].max(u[1]).max(u[2]).max(1.0);
+        (r, g, b) = (u[0] * k, u[1] * k, u[2] * k);
+    } else {
+        r = (rgb[0] * wb[0]).clamp(0.0, 1.0);
+        g = (rgb[1] * wb[1]).clamp(0.0, 1.0);
+        b = (rgb[2] * wb[2]).clamp(0.0, 1.0);
+    }
+    if highlights != Highlights::Clip {
         // The brightest channel (as measured, before white balance) tells how close the pixel
         // is to clipping: fade the others up to the brightest balanced one.
         let s = rgb[0].max(rgb[1]).max(rgb[2]);
@@ -1464,6 +1473,26 @@ mod tests {
     fn identity_matrix_without_color() {
         let m = camera_to_srgb(&ColorMatrices::default());
         assert_eq!(m[0], [1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn blend_highlights_keep_the_colour_above_white_and_change_nothing_below() {
+        let wb = [2.0, 1.0, 1.5, 1.0];
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h);
+        // Red above white after balance (0.8 * 2 = 1.6), green and blue low: Clip loses the ratio,
+        // Blend keeps it and reaches exactly white level in the brightest channel.
+        let red = [0.8, 0.2, 0.1];
+        let (c, b) = (f(red, Highlights::Clip), f(red, Highlights::Blend));
+        assert_eq!(b[0], 1.0);
+        assert!((b[1] / b[0] - 0.2 / 1.6).abs() < 1e-6 && (b[2] / b[0] - 0.15 / 1.6).abs() < 1e-6, "{b:?}");
+        assert!(c[1] / c[0] > b[1] / b[0], "{c:?} {b:?}");
+        // At sensor saturation both fading modes are white.
+        assert_eq!(f([0.45, 1.0, 0.6], Highlights::Blend), [1.0, 1.0, 1.0]);
+        // Pixels whose balanced channels are all within [0, 1] are identical in every mode.
+        for px in [[0.3, 0.4, 0.2], [0.0, 0.0, 0.0], [0.4, 0.9, 0.5]] {
+            assert_eq!(f(px, Highlights::Clip), f(px, Highlights::Blend), "{px:?}");
+        }
     }
 
     #[test]

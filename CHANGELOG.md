@@ -12,6 +12,9 @@
   `flashraw_decode_options.highlights`): pixels with a channel at or near sensor saturation fade smoothly to
   white instead of keeping the colour cast of a partly clipped pixel (magenta, yellow). `Clip`, the old
   behaviour, stays the default. CPU only (the GPU backend decodes on the CPU for it).
+- `Highlights::Blend` (`--highlights blend`, `highlights="blend"`, `highlights: 'blend'`, `FLASHRAW_HIGHLIGHTS_BLEND`): as
+  `Neutral`, and pixels that exceed the white level after white balance are scaled down together instead of clamped
+  channel by channel, so a bright red stays red where `Clip` turns it pink. Nothing changes below the white level.
 
 ## 0.1.1 — 2026-10-25
 

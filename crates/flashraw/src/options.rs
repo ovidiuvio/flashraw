@@ -175,6 +175,13 @@ pub enum Highlights {
     /// removes the colour cast around blown highlights. CPU only (the GPU backend decodes on
     /// the CPU for it).
     Neutral,
+    /// Hue-preserving: pixels that exceed the white level after white balance (a channel with a
+    /// large multiplier, not yet at sensor saturation) are scaled down together instead of
+    /// clamped channel by channel, which keeps their colour (a bright red stays red, where
+    /// `Clip` turns it pink or white); pixels at or near sensor saturation fade to white as in
+    /// `Neutral`. Nothing changes below the white level. CPU only (the GPU backend decodes on
+    /// the CPU for it).
+    Blend,
 }
 
 /// What a decode does when the sensor data is corrupt or truncated.
@@ -342,11 +349,12 @@ impl Demosaic {
 }
 
 impl Highlights {
-    /// Parse a highlight mode name (`clip`, `neutral`; case-insensitive).
+    /// Parse a highlight mode name (`clip`, `neutral`, `blend`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().as_str() {
             "clip" => Highlights::Clip,
             "neutral" => Highlights::Neutral,
+            "blend" => Highlights::Blend,
             _ => return None,
         })
     }
@@ -356,6 +364,7 @@ impl Highlights {
         match self {
             Highlights::Clip => "clip",
             Highlights::Neutral => "neutral",
+            Highlights::Blend => "blend",
         }
     }
 }
@@ -457,7 +466,7 @@ mod tests {
         ] {
             assert_eq!(o.to_string().parse::<OutputFormat>(), Ok(o));
         }
-        for h in [Highlights::Clip, Highlights::Neutral] {
+        for h in [Highlights::Clip, Highlights::Neutral, Highlights::Blend] {
             assert_eq!(h.to_string().parse::<Highlights>(), Ok(h));
         }
         for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware] {

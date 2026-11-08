@@ -181,6 +181,7 @@ enum class demosaic : std::int32_t {
 enum class highlights : std::int32_t {
     clip = FLASHRAW_HIGHLIGHTS_CLIP,
     neutral = FLASHRAW_HIGHLIGHTS_NEUTRAL,
+    blend = FLASHRAW_HIGHLIGHTS_BLEND,
 };
 
 enum class corruption_policy : std::int32_t {

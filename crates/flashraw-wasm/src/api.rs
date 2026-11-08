@@ -259,8 +259,9 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
         })?;
     }
     if let Some(h) = str_opt(&v, "highlights")? {
-        o.highlights = flashraw::Highlights::parse(h)
-            .ok_or_else(|| ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip or neutral)")))?;
+        o.highlights = flashraw::Highlights::parse(h).ok_or_else(|| {
+            ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip, neutral or blend)"))
+        })?;
     }
     match v.get("applyOpcodes") {
         None | Some(Value::Null) => {}
