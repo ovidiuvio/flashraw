@@ -204,6 +204,7 @@ fn dng_extras(ifd0: &Ifd, raw: &Ifd) -> flashraw_core::DngExtras {
     p.look_table_dims = dims(tags::PROFILE_LOOK_TABLE_DIMS).filter(|_| ifd0.has(tags::PROFILE_LOOK_TABLE_DATA));
     p.tone_curve = ifd0.has(tags::PROFILE_TONE_CURVE);
     p.baseline_exposure_offset = finite(ifd0.f64(tags::BASELINE_EXPOSURE_OFFSET));
+    x.camera_profile = flashraw_core::CameraProfile::from_dng_ifd(ifd0);
     x
 }
 

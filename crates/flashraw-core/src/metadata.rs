@@ -176,6 +176,11 @@ pub struct DngExtras {
     pub noise_profile: Option<Vec<f64>>,
     /// Camera profile tags.
     pub profile: DngProfileInfo,
+    /// The camera profile embedded in the file (forward matrices, tables, tone curve), when
+    /// it has one. Not serialised: the tables can be large; see [`DngProfileInfo`] for the
+    /// summary.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub camera_profile: Option<crate::camera_profile::CameraProfile>,
 }
 
 /// Normalised metadata for a RAW file, available without decoding sensor data.
