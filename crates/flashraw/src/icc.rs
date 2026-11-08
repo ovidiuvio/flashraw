@@ -179,6 +179,15 @@ impl OutputSetup {
         }
     }
 
+    /// Linear sRGB to the linear RGB the develop pass outputs (the matrix `apply` folds in).
+    pub fn matrix_from_srgb(&self) -> [[f64; 3]; 3] {
+        match &self.kind {
+            Kind::Builtin(cs) => cs.matrix_from_srgb(),
+            Kind::Matrix(m) => m.matrix,
+            Kind::Lut(_) => ColorSpace::ProPhoto.matrix_from_srgb(),
+        }
+    }
+
     /// The second-pass converter, for profiles with lookup tables.
     pub fn lut(&self) -> Option<&LutPlan> {
         match &self.kind {

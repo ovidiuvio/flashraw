@@ -101,15 +101,17 @@ fn workload(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Option<Workload> {
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The edge-aware demosaic, the neutral and blend highlight modes and the automatic white balance run on the CPU only.
+    // The edge-aware demosaic, the neutral and blend highlight modes, the automatic white balance
+    // and camera profiles run on the CPU only.
     if (opts.demosaic == crate::Demosaic::EdgeAware
         || opts.highlights != crate::Highlights::Clip
-        || opts.white_balance != crate::WhiteBalanceMode::AsShot)
+        || opts.white_balance != crate::WhiteBalanceMode::AsShot
+        || opts.camera_profile.is_some())
         && !matches!(base, OutputFormat::RawU16 | OutputFormat::NormalizedF32)
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with the edge-aware demosaic, neutral/blend highlights or automatic white balance".into(),
+                "GPU-resident RGB output with the edge-aware demosaic, neutral/blend highlights, automatic white balance or a camera profile".into(),
             ));
         }
         return Ok(None);

@@ -2,7 +2,7 @@
 
 use crate::color::ColorSpace;
 use crate::icc::{OutputProfile, RenderingIntent};
-use flashraw_core::{Limits, Rect};
+use flashraw_core::{CameraProfile, Limits, Rect};
 
 /// Execution backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
@@ -337,6 +337,16 @@ pub struct DecodeOptions {
     /// lookup tables run a second, slower pass on the CPU. GPU decodes of such profiles
     /// fall back to the CPU. Default: none.
     pub output_profile: Option<OutputProfile>,
+    /// Render the RGB outputs with this DNG camera profile ([`CameraProfile`]): its colour
+    /// matrices (the forward matrix when it has one) replace the file's, and its hue/sat map,
+    /// look table and tone curve change the colours and the tone. Take one from a `.dcp` file
+    /// ([`CameraProfile::from_dcp`]) or from the DNG being decoded
+    /// ([`crate::FlashRaw::embedded_camera_profile`]). Applies to [`OutputFormat::Rgba8`],
+    /// [`OutputFormat::Rgb16`] and the linear RGB outputs of three-colour sensors; `exposure`
+    /// and the black and white points are applied after it. CPU only: GPU decodes fall back
+    /// to the CPU. Default: none, which leaves the output bit-identical to a decode without
+    /// the option.
+    pub camera_profile: Option<CameraProfile>,
 }
 
 impl DecodeOptions {
@@ -373,6 +383,7 @@ impl Default for DecodeOptions {
             preview_fallback: false,
             color_space: ColorSpace::Srgb,
             output_profile: None,
+            camera_profile: None,
         }
     }
 }

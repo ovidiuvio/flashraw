@@ -6,8 +6,8 @@ mod probe;
 
 use clap::{Args, Parser, Subcommand};
 use flashraw::{
-    Backend, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, OutputFormat, OutputProfile,
-    Rect, RenderingIntent, WhiteBalanceMode,
+    Backend, CameraProfile, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, OutputFormat,
+    OutputProfile, Rect, RenderingIntent, WhiteBalanceMode,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -82,6 +82,12 @@ struct DecodeArgs {
     /// Black point compensation for --output-profile.
     #[arg(long)]
     bpc: bool,
+    /// RGB outputs: render with a DNG camera profile: a .dcp file, or `embedded` for the
+    /// profile stored in the DNG being decoded (an error when it has none). Replaces the
+    /// file's colour matrices and applies the profile's hue/sat map, look table and tone
+    /// curve. CPU only.
+    #[arg(long, value_name = "FILE.dcp|embedded")]
+    camera_profile: Option<String>,
     /// Print per-stage timings.
     #[arg(long)]
     profile: bool,
@@ -205,7 +211,21 @@ fn policy(strict: bool) -> CorruptionPolicy {
     if strict { CorruptionPolicy::Strict } else { CorruptionPolicy::Recover }
 }
 
-fn decode_options(a: &DecodeArgs) -> Result<DecodeOptions, String> {
+fn decode_options(a: &DecodeArgs, raw: Option<&FlashRaw<'_>>) -> Result<DecodeOptions, String> {
+    let camera_profile = match a.camera_profile.as_deref() {
+        None => None,
+        Some("embedded") => match raw {
+            Some(r) => Some(
+                r.embedded_camera_profile()
+                    .ok_or("--camera-profile embedded: the file has no embedded camera profile")?,
+            ),
+            None => return Err("--camera-profile embedded is not supported here; pass a .dcp file".into()),
+        },
+        Some(p) => {
+            let bytes = std::fs::read(p).map_err(|e| format!("{p}: {e}"))?;
+            Some(CameraProfile::from_dcp(&bytes).map_err(|e| format!("{p}: {e}"))?)
+        }
+    };
     let output_profile = match &a.output_profile {
         Some(p) => {
             let bytes = std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -232,6 +252,7 @@ fn decode_options(a: &DecodeArgs) -> Result<DecodeOptions, String> {
         black_point: a.black_point,
         white_point: a.white_point,
         preview_fallback: a.preview_fallback,
+        camera_profile,
         ..Default::default()
     })
 }
@@ -296,7 +317,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::Decode { file, out, format, args } => {
             let raw = open(&file)?;
-            let opts = decode_options(&args)?;
+            let opts = decode_options(&args, Some(&raw))?;
             let frame = match args.tile {
                 Some(t) => raw.decode_tile(t, opts),
                 None => raw.decode(opts),
@@ -340,7 +361,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Benchmark { files, iterations, args } => {
-            let opts = decode_options(&args)?;
+            let opts = decode_options(&args, None)?;
             for f in &files {
                 output::benchmark(f, &opts, iterations.max(1), args.json)?;
             }

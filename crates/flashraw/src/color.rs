@@ -40,7 +40,7 @@ pub enum ColorSpace {
     Custom,
 }
 
-type Mat = [[f64; 3]; 3];
+pub(crate) type Mat = [[f64; 3]; 3];
 
 /// ICC D50 PCS illuminant.
 const D50: [f64; 3] = [0.9642, 1.0, 0.8249];
@@ -48,7 +48,7 @@ const D50: [f64; 3] = [0.9642, 1.0, 0.8249];
 const SRGB_PRIMARIES: [[f64; 2]; 3] = [[0.64, 0.33], [0.30, 0.60], [0.15, 0.06]];
 const D65_XY: [f64; 2] = [0.3127, 0.3290];
 
-fn mul(a: &Mat, b: &Mat) -> Mat {
+pub(crate) fn mul(a: &Mat, b: &Mat) -> Mat {
     let mut r = [[0.0; 3]; 3];
     for i in 0..3 {
         for j in 0..3 {
@@ -58,11 +58,11 @@ fn mul(a: &Mat, b: &Mat) -> Mat {
     r
 }
 
-fn mul_vec(a: &Mat, v: [f64; 3]) -> [f64; 3] {
+pub(crate) fn mul_vec(a: &Mat, v: [f64; 3]) -> [f64; 3] {
     std::array::from_fn(|i| (0..3).map(|k| a[i][k] * v[k]).sum())
 }
 
-fn inv(m: &Mat) -> Mat {
+pub(crate) fn inv(m: &Mat) -> Mat {
     let [[a, b, c], [d, e, f], [g, h, i]] = *m;
     let det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
     let s = 1.0 / det;
@@ -90,7 +90,7 @@ fn rgb_to_xyz(primaries: &[[f64; 2]; 3], white: [f64; 3]) -> Mat {
 }
 
 /// Bradford chromatic adaptation matrix from white `src` to white `dst` (XYZ).
-fn bradford(src: [f64; 3], dst: [f64; 3]) -> Mat {
+pub(crate) fn bradford(src: [f64; 3], dst: [f64; 3]) -> Mat {
     const B: Mat = [[0.8951, 0.2664, -0.1614], [-0.7502, 1.7135, 0.0367], [0.0389, -0.0685, 1.0296]];
     let (s, d) = (mul_vec(&B, src), mul_vec(&B, dst));
     let scale: Mat = [[d[0] / s[0], 0.0, 0.0], [0.0, d[1] / s[1], 0.0], [0.0, 0.0, d[2] / s[2]]];

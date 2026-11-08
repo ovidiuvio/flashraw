@@ -101,6 +101,7 @@
 #![warn(missing_docs)]
 
 mod ca;
+mod camera_profile;
 mod color;
 mod edgeaware;
 mod frame;
@@ -122,11 +123,12 @@ pub use color::ColorSpace;
 #[doc(hidden)]
 pub use color::{CurveTables, OutputCurve};
 pub use flashraw_core::{
-    BlackLevel, CfaColor, CfaPattern, ColorMatrices, ColorMatrix, ColorSource, Compression, CorruptReason, DataUnit,
-    DecodeUnit, DecodeWarning, DngExtras, DngProfileInfo, EXTRA_CROP_SOURCE, EXTRA_IMAGE_SIZE, Error, ExposureInfo,
-    FrameInfo, GpsInfo, Illuminant, LensInfo, Limits, Orientation, OrientationMetadata, OrientationPolicy,
-    OrientationSource, PreviewEncoding, PreviewInfo, PreviewKind, RandomAccess, RawFormat, RawMetadata, Rect, Result,
-    SampleFormat, SensorLayout, Stage, Truncation, WhiteBalance, WhiteLevel,
+    BlackLevel, CameraProfile, CfaColor, CfaPattern, ColorMatrices, ColorMatrix, ColorSource, Compression,
+    CorruptReason, DataUnit, DecodeUnit, DecodeWarning, DngExtras, DngProfileInfo, EXTRA_CROP_SOURCE, EXTRA_IMAGE_SIZE,
+    Error, ExposureInfo, FrameInfo, GpsInfo, Illuminant, LensInfo, Limits, Orientation, OrientationMetadata,
+    OrientationPolicy, OrientationSource, PreviewEncoding, PreviewInfo, PreviewKind, ProfileTable, RandomAccess,
+    RawFormat, RawMetadata, Rect, Result, SampleFormat, SensorLayout, Stage, TableEncoding, Truncation, WhiteBalance,
+    WhiteLevel,
 };
 pub use frame::{BackendReport, DecodeStatistics, FrameSource, RawFrame, RawPixelData};
 pub use icc::{OutputProfile, RenderingIntent, icc_supported};
@@ -190,6 +192,14 @@ impl<'a> FlashRaw<'a> {
     /// Normalised metadata (no pixel decoding involved).
     pub fn metadata(&self) -> &RawMetadata {
         self.decoder.metadata()
+    }
+
+    /// The camera profile embedded in a DNG (forward matrices, hue/sat map, look table, tone
+    /// curve), for [`DecodeOptions::camera_profile`]. `None` for files without profile data;
+    /// the colour matrices every DNG carries do not make a profile. The colour matrices of
+    /// the file are used when the profile has none.
+    pub fn embedded_camera_profile(&self) -> Option<CameraProfile> {
+        self.metadata().dng.as_ref().and_then(|d| d.camera_profile.clone())
     }
 
     /// Geometry and calibration of the sensor buffer (known before decoding).
@@ -474,19 +484,51 @@ impl<'a> FlashRaw<'a> {
                     params.recon =
                         process::fit_reconstruction(&img, &frame_info_for_post, origin, params.wb).unwrap_or_default();
                 }
+                // A camera profile replaces the colour conversion: the develop pass delivers
+                // balanced camera RGB and the profile turns it into the output space.
+                let profile_render = match &opts.camera_profile {
+                    Some(cp) => {
+                        if params.cam4_to_rgb.is_some() {
+                            return Err(Error::InvalidArgument(
+                                "camera profiles apply to three-colour sensors; this file has four colour channels"
+                                    .into(),
+                            ));
+                        }
+                        let neutral = [0, 1, 2].map(|i| 1.0 / params.wb[i].max(1e-6) as f64);
+                        let r = camera_profile::ProfileRender::new(
+                            cp,
+                            &frame_info_for_post.color_matrices.color,
+                            neutral,
+                            &setup.matrix_from_srgb(),
+                        )?;
+                        params.cam_to_rgb = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+                        params.levels = None;
+                        Some(r)
+                    }
+                    None => None,
+                };
                 let staged =
                     opts.apply_opcodes && lists.as_ref().is_some_and(|l| l.has_pixel_ops(1) || l.has_pixel_ops(2));
                 // Staggered lattices (SuperCCD) develop to linear RGB in the stored grid, then
                 // are resampled to square pixels before encoding; so do profiles with lookup
                 // tables, which convert the linear image before quantising.
                 let stagger = stagger::of(self.metadata(), info);
-                let dev_enc = if stagger.is_some() || lut.is_some() { process::RgbEncoding::LinearF32 } else { enc };
+                let float_pass = stagger.is_some() || lut.is_some() || profile_render.is_some();
+                let dev_enc = if float_pass { process::RgbEncoding::LinearF32 } else { enc };
                 let developed = profiler.time(Stage::Postprocess, || match lists.as_mut().filter(|_| staged) {
                     Some(l) => l.develop(&img, &frame_info_for_post, origin, &params, dev_enc, ctx.parallel),
                     None => {
                         process::develop_encoded(&img, &frame_info_for_post, origin, &params, dev_enc, ctx.parallel)
                     }
                 })?;
+                let developed = match (developed, &profile_render) {
+                    ((w, h, c, RawPixelData::F32(rgb)), Some(pr)) => {
+                        let mut d = process::Developed { width: w, height: h, rgb };
+                        profiler.time(Stage::Postprocess, || pr.apply_image(&mut d, levels, ctx.parallel));
+                        (w, h, c, RawPixelData::F32(d.rgb))
+                    }
+                    (d, _) => d,
+                };
                 let finish = |d: process::Developed| -> Result<(u32, u32, u32, RawPixelData)> {
                     match lut {
                         #[cfg(feature = "icc")]
@@ -507,7 +549,7 @@ impl<'a> FlashRaw<'a> {
                         let win = Rect::new(crop.x + origin.0, crop.y + origin.1, crop.width, crop.height);
                         finish(st.resample(&d, win, ctx.parallel))
                     })?,
-                    (None, (w, h, _, RawPixelData::F32(rgb))) if lut.is_some() => {
+                    (None, (w, h, _, RawPixelData::F32(rgb))) if lut.is_some() || profile_render.is_some() => {
                         profiler.time(Stage::Postprocess, || finish(process::Developed { width: w, height: h, rgb }))?
                     }
                     (_, r) => r,
