@@ -864,13 +864,13 @@ and the colour error). Noise is added to the mosaic before development (variance
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
 
 On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all: every other method trades some of it
-for edge detail. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer after LibRaw DCB (a tie within 0.1 dB) and is
+for edge detail. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
 0.12 dB behind LibRaw Markesteijn 1-pass on X-Trans.
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
 index (mean Laplacian of R-G and B-G over the Laplacian of luma; lower = fewer false-colour dots and zipper patterns) and
-the *fine detail* (luma Laplacian). 13 Bayer files (Canon, Nikon, Sony, Panasonic, Fujifilm GFX, Olympus, Pentax, Leica,
-including CR3 files LibRaw crops differently, left out of the LibRaw columns) and 10 X-Trans files. The luma Laplacian of
+the *fine detail* (luma Laplacian). 13 Bayer files (two CR3 files that LibRaw crops differently are left out of the LibRaw columns) and 10 X-Trans files;
+the file lists are in `tools/bench/demosaic/real.py`. The luma Laplacian of
 a noisy file is mostly noise, so a higher detail value is not always better detail.
 
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
