@@ -48,6 +48,7 @@ include = [
     "flashraw_output_format",
     "flashraw_demosaic",
     "flashraw_white_balance",
+    "flashraw_noise_reduction",
     "flashraw_highlights",
     "flashraw_corruption_policy",
     "flashraw_sample_type",

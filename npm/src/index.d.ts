@@ -533,11 +533,22 @@ export interface DecodeOptions {
    */
   highlights?: 'clip' | 'neutral' | 'blend' | 'reconstruct';
   /**
-   * White balance of RGB outputs. `as-shot` (default) uses the camera's balance; `auto` refines
+   * White balance of RGB outputs. `as-shot` (default) uses the camera's balance; `daylight` is D65
+   * from the file's colour matrix; `auto` refines
    * the camera's balance over the near-neutral areas of the frame (CPU only: the WebGPU build falls back to
    * the CPU for it).
    */
-  whiteBalance?: 'as-shot' | 'auto';
+  whiteBalance?: 'as-shot' | 'auto' | 'daylight';
+  /**
+   * `[red, green, blue]` multipliers of the camera RGB, replacing `whiteBalance` (three-colour
+   * sensors; CPU only: the WebGPU build falls back to the CPU for it).
+   */
+  whiteBalanceMultipliers?: [number, number, number];
+  /**
+   * Smoothing of `demosaic: 'edge-aware'`: `auto` (default, from the frame's noise), `off`, `low`,
+   * `medium` or `high` (any other level than `auto` runs on the CPU).
+   */
+  noiseReduction?: 'auto' | 'off' | 'low' | 'medium' | 'high';
   /**
    * Correct the lateral chromatic aberration of Bayer frames (RGB outputs): the radial scale of
    * the red and blue planes against green is estimated from the frame and corrected before

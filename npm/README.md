@@ -267,6 +267,8 @@ const f = await raw.decode({
                             // | 'linear-rgb-f16' | 'rgba8' | 'rgb16'
   backend: 'auto',          // 'auto' | 'cpu' (scalar reference) | 'cpu-simd' | 'gpu'
   demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size' | 'edge-aware' (Bayer/X-Trans, slower, cleaner)
+  whiteBalanceMultipliers: [2.1, 1, 1.6], // replaces whiteBalance (CPU only); whiteBalance also takes 'daylight'
+  noiseReduction: 'auto',   // edge-aware smoothing: 'off' | 'low' | 'medium' | 'high' (not auto: CPU only)
   chromaticAberration: false, // RGB outputs: correct lateral chromatic aberration of Bayer frames (CPU only)
   whiteBalance: 'as-shot',  // RGB outputs: 'as-shot' | 'auto' (refine the camera's over the near-neutral areas; CPU only)
   highlights: 'clip',       // RGB outputs: 'clip' | 'neutral' (fade clipped pixels to white) | 'blend' (also keep the colour of pixels above white after white balance) | 'reconstruct' (rebuild clipped channels from the frame's unclipped blocks); CPU only

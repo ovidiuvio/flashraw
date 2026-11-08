@@ -72,6 +72,24 @@ pub enum flashraw_white_balance {
     FLASHRAW_WHITE_BALANCE_AS_SHOT = 0,
     /// Refine the camera's balance over the near-neutral areas of the frame. CPU only (the GPU backend decodes on the CPU for it).
     FLASHRAW_WHITE_BALANCE_AUTO = 1,
+    /// Daylight (D65) from the file's colour matrix. CPU only.
+    FLASHRAW_WHITE_BALANCE_DAYLIGHT = 2,
+}
+
+/// Smoothing of the edge-aware demosaic (`flashraw_decode_options.noise_reduction`).
+#[repr(i32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum flashraw_noise_reduction {
+    /// Estimated from the noise of the frame; none on clean frames. The default.
+    FLASHRAW_NOISE_REDUCTION_AUTO = 0,
+    /// No smoothing.
+    FLASHRAW_NOISE_REDUCTION_OFF = 1,
+    /// At least a quarter of the way to the local mean. CPU only.
+    FLASHRAW_NOISE_REDUCTION_LOW = 2,
+    /// At least half way. CPU only.
+    FLASHRAW_NOISE_REDUCTION_MEDIUM = 3,
+    /// At least four fifths of the way. CPU only.
+    FLASHRAW_NOISE_REDUCTION_HIGH = 4,
 }
 
 /// Clipped highlights of the RGB outputs (`flashraw_decode_options.highlights`).
@@ -493,8 +511,13 @@ pub struct flashraw_decode_options {
     /// Non-zero: use the camera profile embedded in the DNG being decoded (an error when it
     /// has none). Not combinable with `camera_profile`. Default 0.
     pub camera_profile_embedded: i32,
-    /// Reserved, zero.
-    pub reserved2: i32,
+    /// `flashraw_noise_reduction` of the edge-aware demosaic. Default
+    /// `FLASHRAW_NOISE_REDUCTION_AUTO` (0; this field was reserved and zero before).
+    pub noise_reduction: i32,
+    /// Red, green and blue multipliers of the camera RGB, replacing `white_balance` (RGB outputs,
+    /// three-colour sensors, CPU only). All zero (the default): not set; otherwise all three must
+    /// be positive and finite.
+    pub white_balance_multipliers: [f32; 3],
 }
 
 /// Size of the first published layout of each versioned struct. Callers built against an
@@ -654,7 +677,20 @@ pub(crate) fn white_balance_from(v: i32) -> FfiResult<flashraw::WhiteBalanceMode
     Ok(match v {
         0 => flashraw::WhiteBalanceMode::AsShot,
         1 => flashraw::WhiteBalanceMode::Auto,
+        2 => flashraw::WhiteBalanceMode::Daylight,
         _ => return Err(FfiError::invalid(format!("unknown white balance {v}"))),
+    })
+}
+
+pub(crate) fn noise_reduction_from(v: i32) -> FfiResult<flashraw::NoiseReduction> {
+    use flashraw::NoiseReduction as N;
+    Ok(match v {
+        0 => N::Auto,
+        1 => N::Off,
+        2 => N::Low,
+        3 => N::Medium,
+        4 => N::High,
+        _ => return Err(FfiError::invalid(format!("unknown noise reduction {v}"))),
     })
 }
 
@@ -765,10 +801,13 @@ mod tests {
         // color_space, intent, black_point_compensation, highlights and the output profile
         // pointer and length (pointer-sized, so the total depends on the platform), then white_balance
         // and a reserved word, then the camera profile pointer and length, camera_profile_embedded
-        // and a reserved word.
+        // and noise_reduction, then the three white balance multipliers.
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, preview_fallback), 76);
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, color_space), 80);
-        assert_eq!(size_of::<flashraw_decode_options>(), 112 + 4 * size_of::<usize>());
+        assert_eq!(
+            size_of::<flashraw_decode_options>(),
+            (112 + 4 * size_of::<usize>() + 12).next_multiple_of(std::mem::align_of::<usize>())
+        );
         assert_eq!(size_of::<flashraw_preview_info>(), flashraw_preview_info::MIN_SIZE);
         assert_eq!(size_of::<flashraw_decode_stats>(), flashraw_decode_stats::MIN_SIZE);
         assert_eq!(size_of::<flashraw_rect>(), 16);

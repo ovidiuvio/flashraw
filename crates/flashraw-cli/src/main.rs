@@ -6,8 +6,8 @@ mod probe;
 
 use clap::{Args, Parser, Subcommand};
 use flashraw::{
-    Backend, CameraProfile, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights, OutputFormat,
-    OutputProfile, Rect, RenderingIntent, WhiteBalanceMode,
+    Backend, CameraProfile, ColorSpace, CorruptionPolicy, DecodeOptions, Demosaic, FlashRaw, Highlights,
+    NoiseReduction, OutputFormat, OutputProfile, Rect, RenderingIntent, WhiteBalanceMode,
 };
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -43,9 +43,16 @@ struct DecodeArgs {
     /// Clipped highlights of RGB outputs: clip, neutral, blend, reconstruct.
     #[arg(long, default_value = "clip")]
     highlights: String,
-    /// White balance of RGB outputs: as-shot, auto (refine the camera's over near-neutral areas).
+    /// White balance of RGB outputs: as-shot, daylight (D65 from the colour matrix), auto (refine the
+    /// camera's over near-neutral areas).
     #[arg(long, default_value = "as-shot")]
     white_balance: String,
+    /// Red,green,blue multipliers of the camera RGB, replacing --white-balance (e.g. 2.1,1,1.6).
+    #[arg(long, value_name = "R,G,B", value_parser = parse_multipliers)]
+    wb_multipliers: Option<[f32; 3]>,
+    /// Smoothing of --demosaic edge-aware: auto (from the frame's noise), off, low, medium, high.
+    #[arg(long, default_value = "auto")]
+    noise_reduction: String,
     /// Correct the lateral chromatic aberration of Bayer frames (RGB outputs).
     #[arg(long)]
     chromatic_aberration: bool,
@@ -249,6 +256,9 @@ fn decode_options(a: &DecodeArgs, raw: Option<&FlashRaw<'_>>) -> Result<DecodeOp
         highlights: Highlights::parse(&a.highlights).ok_or_else(|| format!("unknown highlights {:?}", a.highlights))?,
         white_balance: WhiteBalanceMode::parse(&a.white_balance)
             .ok_or_else(|| format!("unknown white balance {:?}", a.white_balance))?,
+        white_balance_multipliers: a.wb_multipliers,
+        noise_reduction: NoiseReduction::parse(&a.noise_reduction)
+            .ok_or_else(|| format!("unknown noise reduction {:?}", a.noise_reduction))?,
         chromatic_aberration: a.chromatic_aberration,
         apply_opcodes: !a.no_opcodes,
         corruption_policy: policy(a.strict),
@@ -259,6 +269,15 @@ fn decode_options(a: &DecodeArgs, raw: Option<&FlashRaw<'_>>) -> Result<DecodeOp
         camera_profile,
         ..Default::default()
     })
+}
+
+fn parse_multipliers(s: &str) -> Result<[f32; 3], String> {
+    let v: Vec<f32> =
+        s.split(',').map(|t| t.trim().parse::<f32>().map_err(|e| format!("{t:?}: {e}"))).collect::<Result<_, _>>()?;
+    match v[..] {
+        [r, g, b] if [r, g, b].iter().all(|x| x.is_finite() && *x > 0.0) => Ok([r, g, b]),
+        _ => Err("expected three positive numbers R,G,B".into()),
+    }
 }
 
 fn main() -> ExitCode {

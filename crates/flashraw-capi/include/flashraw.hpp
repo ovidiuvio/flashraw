@@ -181,6 +181,15 @@ enum class demosaic : std::int32_t {
 enum class white_balance : std::int32_t {
     as_shot = FLASHRAW_WHITE_BALANCE_AS_SHOT,
     automatic = FLASHRAW_WHITE_BALANCE_AUTO,
+    daylight = FLASHRAW_WHITE_BALANCE_DAYLIGHT,
+};
+
+enum class noise_reduction : std::int32_t {
+    automatic = FLASHRAW_NOISE_REDUCTION_AUTO,
+    off = FLASHRAW_NOISE_REDUCTION_OFF,
+    low = FLASHRAW_NOISE_REDUCTION_LOW,
+    medium = FLASHRAW_NOISE_REDUCTION_MEDIUM,
+    high = FLASHRAW_NOISE_REDUCTION_HIGH,
 };
 
 enum class highlights : std::int32_t {
@@ -314,6 +323,10 @@ struct decode_options {
     flashraw::demosaic demosaic = flashraw::demosaic::bilinear;
     flashraw::highlights highlights = flashraw::highlights::clip;
     flashraw::white_balance white_balance = flashraw::white_balance::as_shot;
+    /// Red, green and blue multipliers of the camera RGB, replacing `white_balance` (all zero: not set).
+    std::array<float, 3> white_balance_multipliers = {0.0f, 0.0f, 0.0f};
+    /// Smoothing of the edge-aware demosaic (CPU only unless automatic).
+    flashraw::noise_reduction noise_reduction = flashraw::noise_reduction::automatic;
     /// Correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU only).
     bool chromatic_aberration = false;
     flashraw::corruption_policy corruption = flashraw::corruption_policy::recover;
@@ -357,6 +370,8 @@ struct decode_options {
         o.demosaic = static_cast<std::int32_t>(demosaic);
         o.highlights = static_cast<std::int32_t>(highlights);
         o.white_balance = static_cast<std::int32_t>(white_balance);
+        o.noise_reduction = static_cast<std::int32_t>(noise_reduction);
+        for (int i = 0; i < 3; ++i) o.white_balance_multipliers[i] = white_balance_multipliers[i];
         o.chromatic_aberration = chromatic_aberration ? 1 : 0;
         o.corruption_policy = static_cast<std::int32_t>(corruption);
         o.threads = threads;

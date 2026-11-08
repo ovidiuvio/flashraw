@@ -281,8 +281,27 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
         o.chromatic_aberration = *b;
     }
     if let Some(m) = str_opt(&v, "whiteBalance")? {
-        o.white_balance = flashraw::WhiteBalanceMode::parse(m)
-            .ok_or_else(|| ApiError::invalid(format!("unknown `whiteBalance` {m:?} (expected as-shot or auto)")))?;
+        o.white_balance = flashraw::WhiteBalanceMode::parse(m).ok_or_else(|| {
+            ApiError::invalid(format!("unknown `whiteBalance` {m:?} (expected as-shot, auto or daylight)"))
+        })?;
+    }
+    if let Some(m) = str_opt(&v, "noiseReduction")? {
+        o.noise_reduction = flashraw::NoiseReduction::parse(m).ok_or_else(|| {
+            ApiError::invalid(format!("unknown `noiseReduction` {m:?} (expected auto, off, low, medium or high)"))
+        })?;
+    }
+    match v.get("whiteBalanceMultipliers") {
+        None | Some(Value::Null) => {}
+        Some(Value::Array(a)) if a.len() == 3 => {
+            let mut m = [0f32; 3];
+            for (d, x) in m.iter_mut().zip(a) {
+                *d = x.as_f64().filter(|x| x.is_finite() && *x > 0.0).ok_or_else(|| {
+                    ApiError::invalid("option `whiteBalanceMultipliers` must hold three positive numbers")
+                })? as f32;
+            }
+            o.white_balance_multipliers = Some(m);
+        }
+        Some(_) => return Err(ApiError::invalid("option `whiteBalanceMultipliers` must be [red, green, blue]")),
     }
     match v.get("applyOpcodes") {
         None | Some(Value::Null) => {}

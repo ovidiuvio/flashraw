@@ -246,12 +246,53 @@ enum flashraw_white_balance
      * Refine the camera's balance over the near-neutral areas of the frame. CPU only (the GPU backend decodes on the CPU for it).
      */
     FLASHRAW_WHITE_BALANCE_AUTO = 1,
+    /**
+     * Daylight (D65) from the file's colour matrix. CPU only.
+     */
+    FLASHRAW_WHITE_BALANCE_DAYLIGHT = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
 typedef enum flashraw_white_balance flashraw_white_balance;
 #else
 typedef int32_t flashraw_white_balance;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+/**
+ * Smoothing of the edge-aware demosaic (`flashraw_decode_options.noise_reduction`).
+ */
+enum flashraw_noise_reduction
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : int32_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    /**
+     * Estimated from the noise of the frame; none on clean frames. The default.
+     */
+    FLASHRAW_NOISE_REDUCTION_AUTO = 0,
+    /**
+     * No smoothing.
+     */
+    FLASHRAW_NOISE_REDUCTION_OFF = 1,
+    /**
+     * At least a quarter of the way to the local mean. CPU only.
+     */
+    FLASHRAW_NOISE_REDUCTION_LOW = 2,
+    /**
+     * At least half way. CPU only.
+     */
+    FLASHRAW_NOISE_REDUCTION_MEDIUM = 3,
+    /**
+     * At least four fifths of the way. CPU only.
+     */
+    FLASHRAW_NOISE_REDUCTION_HIGH = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum flashraw_noise_reduction flashraw_noise_reduction;
+#else
+typedef int32_t flashraw_noise_reduction;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -1001,9 +1042,16 @@ typedef struct flashraw_decode_options {
      */
     int32_t camera_profile_embedded;
     /**
-     * Reserved, zero.
+     * `flashraw_noise_reduction` of the edge-aware demosaic. Default
+     * `FLASHRAW_NOISE_REDUCTION_AUTO` (0; this field was reserved and zero before).
      */
-    int32_t reserved2;
+    int32_t noise_reduction;
+    /**
+     * Red, green and blue multipliers of the camera RGB, replacing `white_balance` (RGB outputs,
+     * three-colour sensors, CPU only). All zero (the default): not set; otherwise all three must
+     * be positive and finite.
+     */
+    float white_balance_multipliers[3];
 } flashraw_decode_options;
 
 /**

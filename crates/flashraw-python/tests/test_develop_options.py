@@ -20,6 +20,11 @@ def test_edge_aware_and_highlights_options(mlv_path: pathlib.Path) -> None:
         assert neutral.array.shape == base.array.shape
         assert raw.decode("rgba8", highlights="blend").array.shape == base.array.shape
         assert raw.decode("rgba8", highlights="reconstruct").array.shape == base.array.shape
+        for kw in ({"white_balance": "daylight"}, {"white_balance_multipliers": (2.0, 1.0, 1.5)},
+                   {"demosaic": "edge-aware", "noise_reduction": "high"}):
+            assert raw.decode("rgba8", **kw).array.shape == base.array.shape
+        with pytest.raises(flashraw.InvalidArgumentError):
+            raw.decode("rgba8", noise_reduction="loud")
         assert raw.decode("rgba8", chromatic_aberration=True).array.shape == base.array.shape
         assert raw.decode("rgba8", white_balance="auto").array.shape == base.array.shape
         assert np.array_equal(raw.decode("rgba8", white_balance="as-shot").array, base.array)

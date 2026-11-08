@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Noise level and more white balance controls. `DecodeOptions::noise_reduction` (`--noise-reduction`, `noise_reduction=`,
+  `noiseReduction`, `flashraw_decode_options.noise_reduction`): `auto` (the default, as before), `off`, `low`, `medium`,
+  `high` set the smoothing of `Demosaic::EdgeAware` (levels are floors on the weight estimated from the frame's noise).
+  `WhiteBalanceMode::Daylight` (D65 from the file's colour matrix) and `DecodeOptions::white_balance_multipliers`
+  (`--wb-multipliers R,G,B`, `white_balance_multipliers=`, `whiteBalanceMultipliers`,
+  `flashraw_decode_options.white_balance_multipliers`; all zero = unset). Defaults are unchanged. CPU only (the GPU
+  backend decodes on the CPU for them). `flashraw_decode_options` grows by 12 bytes (`reserved2` became
+  `noise_reduction`). The compat layer maps `fbdd_noiserd` 1 and 2 to `low` and `high`.
+
 - DNG camera profiles, opt-in (`DecodeOptions::camera_profile`, `--camera-profile FILE.dcp|embedded`,
   `camera_profile=` in Python, `cameraProfile` in JavaScript, `camera_profile` / `camera_profile_embedded` in
   `flashraw_decode_options`): the RGB outputs of three-colour sensors are rendered with a `.dcp` file or with the

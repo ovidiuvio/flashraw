@@ -516,6 +516,8 @@ class RawFile:
         white_balance: str = "as-shot",
         chromatic_aberration: bool = False,
         camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
+        noise_reduction: str = "auto",
+        white_balance_multipliers: Optional[Tuple[float, float, float]] = None,
     ) -> Frame:
         """Decode the sensor data. The GIL is released while decoding.
 
@@ -568,8 +570,13 @@ class RawFile:
                 (also rebuild clipped channels from a model fitted on the frame) (CPU only).
             chromatic_aberration: correct the lateral chromatic aberration of Bayer frames (RGB
                 outputs; CPU only).
-            white_balance: ``"as-shot"`` (default, the camera's balance) or ``"auto"`` (refine the camera's
-                balance over the near-neutral areas; CPU only).
+            white_balance: ``"as-shot"`` (default, the camera's balance), ``"daylight"`` (D65 from the
+                file's colour matrix) or ``"auto"`` (refine the camera's balance over the near-neutral
+                areas; CPU only).
+            white_balance_multipliers: ``(red, green, blue)`` multipliers of the camera RGB, replacing
+                ``white_balance`` (RGB outputs, three-colour sensors; CPU only).
+            noise_reduction: smoothing of ``demosaic="edge-aware"``: ``"auto"`` (default, from the
+                frame's noise), ``"off"``, ``"low"``, ``"medium"`` or ``"high"`` (CPU only unless auto).
             camera_profile: RGB outputs: render with a DNG camera profile: the bytes of a
                 ``.dcp`` file, a path to one, or ``"embedded"`` for the profile stored in the DNG
                 being decoded (:class:`InvalidArgumentError` when it has none). The profile's
@@ -602,6 +609,8 @@ class RawFile:
             profile,
             embedded,
             chromatic_aberration,
+            noise_reduction,
+            white_balance_multipliers,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -630,6 +639,8 @@ class RawFile:
         white_balance: str = "as-shot",
         chromatic_aberration: bool = False,
         camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
+        noise_reduction: str = "auto",
+        white_balance_multipliers: Optional[Tuple[float, float, float]] = None,
     ) -> Frame:
         """Decode one independently decodable tile/strip (see :attr:`tiles`)."""
         profile, embedded = _camera_profile(camera_profile)
@@ -657,6 +668,8 @@ class RawFile:
             profile,
             embedded,
             chromatic_aberration,
+            noise_reduction,
+            white_balance_multipliers,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 

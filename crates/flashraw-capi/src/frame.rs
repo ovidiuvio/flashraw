@@ -67,7 +67,8 @@ pub(crate) fn default_decode_options() -> flashraw_decode_options {
         camera_profile: std::ptr::null(),
         camera_profile_len: 0,
         camera_profile_embedded: 0,
-        reserved2: 0,
+        noise_reduction: 0,
+        white_balance_multipliers: [0.0; 3],
     }
 }
 
@@ -86,6 +87,16 @@ pub unsafe extern "C" fn flashraw_decode_options_init(opts: *mut flashraw_decode
     })
 }
 
+fn wb_multipliers(m: &[f32; 3]) -> FfiResult<Option<[f32; 3]>> {
+    if *m == [0.0; 3] {
+        return Ok(None);
+    }
+    if !m.iter().all(|v| v.is_finite() && *v > 0.0) {
+        return Err(FfiError::invalid("white_balance_multipliers must be all zero or all positive and finite"));
+    }
+    Ok(Some(*m))
+}
+
 pub(crate) fn to_decode_options(
     o: &flashraw_decode_options,
     base: flashraw::Limits,
@@ -98,6 +109,8 @@ pub(crate) fn to_decode_options(
         highlights: highlights_from(o.highlights)?,
         white_balance: white_balance_from(o.white_balance)?,
         chromatic_aberration: o.chromatic_aberration != 0,
+        noise_reduction: noise_reduction_from(o.noise_reduction)?,
+        white_balance_multipliers: wb_multipliers(&o.white_balance_multipliers)?,
         corruption_policy: policy_from(o.corruption_policy)?,
         threads: (o.threads != 0).then_some(o.threads as usize),
         crop: o.crop != 0,

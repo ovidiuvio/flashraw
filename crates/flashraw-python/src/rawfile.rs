@@ -332,7 +332,7 @@ impl RawFile {
             invalid(py, format!("unknown highlights {highlights:?} (expected clip, neutral, blend or reconstruct)"))
         })?;
         let wbm = WhiteBalanceMode::parse(white_balance).ok_or_else(|| {
-            invalid(py, format!("unknown white_balance {white_balance:?} (expected as-shot or auto)"))
+            invalid(py, format!("unknown white_balance {white_balance:?} (expected as-shot, auto or daylight)"))
         })?;
         let policy = CorruptionPolicy::parse(corruption_policy).ok_or_else(|| {
             invalid(py, format!("unknown `corruption_policy` {corruption_policy:?} (expected recover or strict)"))
@@ -392,6 +392,8 @@ impl RawFile {
             demosaic: dm,
             highlights: hl,
             white_balance: wbm,
+            white_balance_multipliers: None,
+            noise_reduction: flashraw::NoiseReduction::Auto,
             chromatic_aberration: false,
             apply_opcodes,
             limits,
@@ -585,7 +587,8 @@ impl RawFile {
         apply_opcodes=true, corruption_policy="recover", tile=None, exposure=0.0, black_point=0.0,
         white_point=1.0, preview_fallback=false, color_space="srgb", output_profile=None,
         intent="perceptual", black_point_compensation=false, highlights="clip", white_balance="as-shot",
-        camera_profile=None, camera_profile_embedded=false, chromatic_aberration=false
+        camera_profile=None, camera_profile_embedded=false, chromatic_aberration=false,
+        noise_reduction="auto", white_balance_multipliers=None
     ))]
     #[allow(clippy::too_many_arguments)]
     fn decode<'py>(
@@ -613,6 +616,8 @@ impl RawFile {
         camera_profile: Option<&[u8]>,
         camera_profile_embedded: bool,
         chromatic_aberration: bool,
+        noise_reduction: &str,
+        white_balance_multipliers: Option<(f32, f32, f32)>,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
         if camera_profile.is_some() && camera_profile_embedded {
             return Err(invalid(py, "`camera_profile` is either a profile or \"embedded\", not both"));
@@ -637,6 +642,13 @@ impl RawFile {
         }
         req.tile = tile;
         req.opts.chromatic_aberration = chromatic_aberration;
+        req.opts.noise_reduction = flashraw::NoiseReduction::parse(noise_reduction).ok_or_else(|| {
+            invalid(
+                py,
+                format!("unknown noise_reduction {noise_reduction:?} (expected auto, off, low, medium or high)"),
+            )
+        })?;
+        req.opts.white_balance_multipliers = white_balance_multipliers.map(|(r, g, b)| [r, g, b]);
         req.embedded_profile = camera_profile_embedded;
         if let Some(bytes) = camera_profile {
             req.opts.camera_profile = Some(flashraw::CameraProfile::from_dcp(bytes).map_err(|e| to_pyerr(py, e))?);
