@@ -514,6 +514,7 @@ class RawFile:
         black_point_compensation: bool = False,
         highlights: str = "clip",
         white_balance: str = "as-shot",
+        camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
     ) -> Frame:
         """Decode the sensor data. The GIL is released while decoding.
 
@@ -566,7 +567,14 @@ class RawFile:
                 (also rebuild clipped channels from a model fitted on the frame) (CPU only).
             white_balance: ``"as-shot"`` (default, the camera's balance) or ``"auto"`` (refine the camera's
                 balance over the near-neutral areas; CPU only).
+            camera_profile: RGB outputs: render with a DNG camera profile: the bytes of a
+                ``.dcp`` file, a path to one, or ``"embedded"`` for the profile stored in the DNG
+                being decoded (:class:`InvalidArgumentError` when it has none). The profile's
+                colour matrices replace the file's and its hue/sat map, look table and tone curve
+                are applied; ``exposure`` and the black and white points come after. Three-colour
+                sensors only; CPU only. ``None`` (default): the file's own colour matrices.
         """
+        profile, embedded = _camera_profile(camera_profile)
         t0 = time.perf_counter()
         array, info = self._native.decode(
             output,
@@ -588,6 +596,8 @@ class RawFile:
             black_point_compensation,
             highlights,
             white_balance,
+            profile,
+            embedded,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -614,8 +624,10 @@ class RawFile:
         black_point_compensation: bool = False,
         highlights: str = "clip",
         white_balance: str = "as-shot",
+        camera_profile: Union[bytes, "os.PathLike[str]", str, None] = None,
     ) -> Frame:
         """Decode one independently decodable tile/strip (see :attr:`tiles`)."""
+        profile, embedded = _camera_profile(camera_profile)
         t0 = time.perf_counter()
         array, info = self._native.decode(
             output,
@@ -637,6 +649,8 @@ class RawFile:
             black_point_compensation,
             highlights,
             white_balance,
+            profile,
+            embedded,
         )
         return Frame(array, info, self.metadata, (time.perf_counter() - t0) * 1e3)
 
@@ -655,6 +669,16 @@ def _profile_bytes(profile: Union[bytes, "os.PathLike[str]", str, None]) -> Opti
         with builtins.open(profile, "rb") as f:
             return f.read()
     return bytes(profile)
+
+
+def _camera_profile(profile: Union[bytes, "os.PathLike[str]", str, None]) -> Tuple[Optional[bytes], bool]:
+    """``(dcp bytes, use the embedded profile)`` for a ``camera_profile=`` argument: ``None``,
+    ``"embedded"``, the bytes of a ``.dcp`` file or a path to one."""
+    if profile is None:
+        return None, False
+    if isinstance(profile, str) and profile == "embedded":
+        return None, True
+    return _profile_bytes(profile), False
 
 
 def icc_supported() -> bool:

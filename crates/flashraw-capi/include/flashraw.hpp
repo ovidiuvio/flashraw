@@ -340,6 +340,12 @@ struct decode_options {
     std::size_t output_profile_len = 0;
     flashraw::rendering_intent intent = flashraw::rendering_intent::perceptual;
     bool black_point_compensation = false;
+    /// DNG camera profile (the bytes of a `.dcp` file) to render the RGB outputs with. The
+    /// bytes must outlive the `decode()` call. CPU only.
+    const std::uint8_t *camera_profile = nullptr;
+    std::size_t camera_profile_len = 0;
+    /// Use the camera profile embedded in the DNG (an error when it has none).
+    bool camera_profile_embedded = false;
 
     flashraw_decode_options to_c() const {
         flashraw_decode_options o;
@@ -368,6 +374,9 @@ struct decode_options {
         o.output_profile_len = output_profile_len;
         o.intent = static_cast<std::int32_t>(intent);
         o.black_point_compensation = black_point_compensation ? 1 : 0;
+        o.camera_profile = camera_profile;
+        o.camera_profile_len = camera_profile_len;
+        o.camera_profile_embedded = camera_profile_embedded ? 1 : 0;
         return o;
     }
 };

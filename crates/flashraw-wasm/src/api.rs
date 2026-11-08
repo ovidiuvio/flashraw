@@ -189,6 +189,20 @@ pub struct ApiExtras {
     /// `linear-rgb` with `sampleType: 'f16'`: decoded as `linear-rgb-f16`, reported as
     /// `linear-rgb` with `dataType: 'f16'` (like `normalized`).
     pub rgb_f16: bool,
+    /// `cameraProfile: 'embedded'`: use the camera profile stored in the DNG (resolved against
+    /// the file by [`resolve_embedded_profile`]).
+    pub embedded_profile: bool,
+}
+
+/// Put the DNG's own camera profile in `opts` when the request asked for it.
+fn resolve_embedded_profile(raw: &FlashRaw<'_>, opts: &mut DecodeOptions, x: ApiExtras) -> ApiResult<()> {
+    if x.embedded_profile {
+        opts.camera_profile = Some(
+            raw.embedded_camera_profile()
+                .ok_or_else(|| ApiError::invalid("the file has no embedded camera profile"))?,
+        );
+    }
+    Ok(())
 }
 
 /// Parse decode options. Returns the options and the requested backend name.
@@ -306,6 +320,22 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
         };
         o.output_profile =
             Some(flashraw::OutputProfile::new(bytes).with_intent(intent).with_black_point_compensation(bpc));
+    }
+    // `cameraProfile`: "embedded", or `{ dcp: <base64 of a .dcp file> }` (the JS layer encodes a Uint8Array).
+    match v.get("cameraProfile") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(s)) if s == "embedded" => extras.embedded_profile = true,
+        Some(Value::Object(m)) => {
+            let bytes = m
+                .get("dcp")
+                .and_then(|d| d.as_str())
+                .and_then(base64_decode)
+                .ok_or_else(|| ApiError::invalid("option `cameraProfile` must hold the bytes of a .dcp file"))?;
+            o.camera_profile = Some(flashraw::CameraProfile::from_dcp(&bytes)?);
+        }
+        Some(_) => {
+            return Err(ApiError::invalid("option `cameraProfile` must be 'embedded' or a Uint8Array (a .dcp file)"));
+        }
     }
     if let Some(r) = v.get("region").filter(|r| !r.is_null()) {
         o.region = Some(parse_rect(r)?);
@@ -441,6 +471,7 @@ fn into_decoded_x(mut frame: flashraw::RawFrame, backend: &str, x: ApiExtras) ->
 /// Decode the sensor data (full frame or `options.region`).
 pub fn decode(raw: &FlashRaw<'_>, options_json: &str) -> ApiResult<Decoded> {
     let (mut opts, backend, x) = parse_decode_request(options_json)?;
+    resolve_embedded_profile(raw, &mut opts, x)?;
     apply_active_crop(raw, &mut opts, x);
     into_decoded_x(raw.decode(opts)?, &backend, x)
 }
@@ -471,6 +502,7 @@ pub async fn download_gpu(frame: &flashraw::RawFrame, backend: &str) -> ApiResul
 #[cfg(feature = "gpu")]
 pub async fn decode_gpu(raw: &FlashRaw<'_>, tile: Option<u32>, options_json: &str) -> ApiResult<GpuDecoded> {
     let (mut opts, backend, x) = parse_decode_request(options_json)?;
+    resolve_embedded_profile(raw, &mut opts, x)?;
     if tile.is_none() {
         apply_active_crop(raw, &mut opts, x);
     }
@@ -497,7 +529,8 @@ pub async fn decode_gpu(raw: &FlashRaw<'_>, tile: Option<u32>, options_json: &st
 
 /// Decode one independently decodable tile/strip.
 pub fn decode_tile(raw: &FlashRaw<'_>, index: u32, options_json: &str) -> ApiResult<Decoded> {
-    let (opts, backend, x) = parse_decode_request(options_json)?;
+    let (mut opts, backend, x) = parse_decode_request(options_json)?;
+    resolve_embedded_profile(raw, &mut opts, x)?;
     into_decoded_x(raw.decode_tile(index as usize, opts)?, &backend, x)
 }
 
@@ -673,6 +706,43 @@ mod tests {
             (info["incomplete"].as_bool(), info["warnings"].as_array().map(|a| a.len())),
             (Some(false), Some(0))
         );
+    }
+
+    #[test]
+    fn camera_profile_option() {
+        assert!(parse_decode_request("{}").unwrap().0.camera_profile.is_none());
+        let (_, _, x) = parse_decode_request(r#"{"cameraProfile":"embedded"}"#).unwrap();
+        assert!(x.embedded_profile);
+        for bad in [r#"{"cameraProfile":"other"}"#, r#"{"cameraProfile":3}"#, r#"{"cameraProfile":{"dcp":"!!"}}"#] {
+            assert_eq!(parse_decode_request(bad).unwrap_err().kind, "InvalidArgument", "{bad}");
+        }
+        // Valid base64 that is not a DCP is refused as not being one.
+        assert_eq!(
+            parse_decode_request(r#"{"cameraProfile":{"dcp":"AAECAwQF"}}"#).unwrap_err().kind,
+            "UnsupportedFormat"
+        );
+        // A real profile, base64-encoded by hand from `to_dcp`.
+        let mut profile = flashraw::CameraProfile::default();
+        profile.tone_curve = Some(vec![[0.0, 0.0], [1.0, 1.0]]);
+        let dcp = profile.to_dcp();
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut b64 = String::new();
+        for c in dcp.chunks(3) {
+            let n = c.iter().enumerate().fold(0u32, |a, (i, &b)| a | (b as u32) << (16 - 8 * i));
+            for k in 0..=c.len() {
+                b64.push(T[(n >> (18 - 6 * k) & 63) as usize] as char);
+            }
+        }
+        let o = parse_decode_options(&format!(r#"{{"cameraProfile":{{"dcp":"{b64}"}}}}"#)).unwrap().0;
+        assert!(o.camera_profile.is_some_and(|p| p.tone_curve.is_some()));
+        // `embedded` on a file without a profile fails at decode time.
+        let raw = open(include_bytes!("../../../npm/tests/fixtures/canon-5d3-mlv.dng").to_vec(), "").unwrap();
+        assert_eq!(
+            decode(&raw, r#"{"output":"rgba8","cameraProfile":"embedded"}"#).unwrap_err().kind,
+            "InvalidArgument"
+        );
+        let lossy = open(include_bytes!("../../../npm/tests/fixtures/canon-5d3-lossy.dng").to_vec(), "").unwrap();
+        assert!(decode(&lossy, r#"{"output":"rgba8","demosaic":"half-size","cameraProfile":"embedded"}"#).is_ok());
     }
 
     #[test]

@@ -982,6 +982,27 @@ typedef struct flashraw_decode_options {
      * Reserved, zero.
      */
     int32_t reserved;
+    /**
+     * DNG camera profile (`.dcp` file contents) to render the RGB outputs with (NULL: none).
+     * Replaces the file's colour matrices and applies the profile's hue/sat map, look table
+     * and tone curve. CPU only (the GPU backend decodes on the CPU for it). Read during
+     * `flashraw_decode()` only. An invalid profile fails with
+     * `FLASHRAW_ERROR_INVALID_ARGUMENT` or `FLASHRAW_ERROR_UNSUPPORTED_FORMAT`.
+     */
+    const uint8_t *camera_profile;
+    /**
+     * Size of `camera_profile` in bytes.
+     */
+    size_t camera_profile_len;
+    /**
+     * Non-zero: use the camera profile embedded in the DNG being decoded (an error when it
+     * has none). Not combinable with `camera_profile`. Default 0.
+     */
+    int32_t camera_profile_embedded;
+    /**
+     * Reserved, zero.
+     */
+    int32_t reserved2;
 } flashraw_decode_options;
 
 /**

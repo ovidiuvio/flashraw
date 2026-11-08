@@ -50,3 +50,22 @@ describe('colour spaces', () => {
     assert.deepEqual(via.iccProfile, p3.iccProfile);
   });
 });
+
+describe('camera profiles', () => {
+  const lossy = new Uint8Array(readFileSync(fixture('canon-5d3-lossy.dng')));
+
+  test('the embedded profile changes the colours of a DNG that has one', async () => {
+    const base = await decodeRaw(lossy, { output: 'rgba8', ...half });
+    const prof = await decodeRaw(lossy, { output: 'rgba8', cameraProfile: 'embedded', ...half });
+    assert.equal(prof.data.length, base.data.length);
+    assert.notDeepEqual(prof.data, base.data);
+    const lin = await decodeRaw(lossy, { output: 'linear-rgb', cameraProfile: 'embedded', ...half });
+    assert.ok(lin.data.every(Number.isFinite));
+  });
+
+  test('a file without an embedded profile, and bad profiles, are InvalidArgumentError', async () => {
+    await assert.rejects(decodeRaw(dng, { output: 'rgba8', cameraProfile: 'embedded' }), InvalidArgumentError);
+    await assert.rejects(decodeRaw(dng, { output: 'rgba8', cameraProfile: 'nope' }), InvalidArgumentError);
+    await assert.rejects(decodeRaw(dng, { output: 'rgba8', cameraProfile: new Uint8Array(64) }));
+  });
+});

@@ -346,6 +346,61 @@ fn color_spaces_and_profiles() {
 }
 
 #[test]
+fn camera_profiles() {
+    let f = open_path(&fixture("canon-5d3-lossy.dng"));
+    let plain = open_path(&fixture("canon-5d3-mlv.dng"));
+    // SAFETY: live handles; buffers outlive the calls.
+    unsafe {
+        let mut o = options();
+        o.output = flashraw_output_format::FLASHRAW_OUTPUT_RGBA8 as i32;
+        o.demosaic = flashraw_demosaic::FLASHRAW_DEMOSAIC_HALF_SIZE as i32;
+        let base = decode(f, &o).unwrap();
+        let data =
+            |fr| std::slice::from_raw_parts(flashraw_frame_data(fr) as *const u8, flashraw_frame_sample_count(fr));
+        // The embedded profile changes the colours.
+        o.camera_profile_embedded = 1;
+        let emb = decode(f, &o).unwrap();
+        assert_ne!(data(base), data(emb));
+        // The same profile as .dcp bytes renders identically.
+        let dcp = flashraw::FlashRaw::open_path(fixture("canon-5d3-lossy.dng"))
+            .unwrap()
+            .embedded_camera_profile()
+            .unwrap()
+            .to_dcp();
+        o.camera_profile_embedded = 0;
+        o.camera_profile = dcp.as_ptr();
+        o.camera_profile_len = dcp.len();
+        let from_bytes = decode(f, &o).unwrap();
+        assert_eq!(data(emb), data(from_bytes));
+        // Both at once, junk bytes and a file without an embedded profile are errors.
+        o.camera_profile_embedded = 1;
+        assert_eq!(decode(f, &o).unwrap_err(), flashraw_status::FLASHRAW_ERROR_INVALID_ARGUMENT);
+        let junk = [7u8; 64];
+        o.camera_profile_embedded = 0;
+        o.camera_profile = junk.as_ptr();
+        o.camera_profile_len = junk.len();
+        assert_eq!(decode(f, &o).unwrap_err(), flashraw_status::FLASHRAW_ERROR_UNSUPPORTED_FORMAT);
+        o.camera_profile = null();
+        o.camera_profile_len = 0;
+        o.camera_profile_embedded = 1;
+        assert_eq!(decode(plain, &o).unwrap_err(), flashraw_status::FLASHRAW_ERROR_INVALID_ARGUMENT);
+        assert!(last_error().contains("no embedded camera profile"));
+        // A caller built against the header before the field existed gets no profile.
+        let mut old = options();
+        old.output = flashraw_output_format::FLASHRAW_OUTPUT_RGBA8 as i32;
+        old.demosaic = flashraw_demosaic::FLASHRAW_DEMOSAIC_HALF_SIZE as i32;
+        old.size = std::mem::offset_of!(flashraw_decode_options, camera_profile) as u32;
+        let unchanged = decode(f, &old).unwrap();
+        assert_eq!(data(base), data(unchanged));
+        for fr in [base, emb, from_bytes, unchanged] {
+            flashraw_frame_free(fr);
+        }
+        flashraw_file_free(f);
+        flashraw_file_free(plain);
+    }
+}
+
+#[test]
 fn previews_are_zero_copy() {
     let f = open_path(&fixture("canon-5d3-lossy.dng"));
     // SAFETY: live handle until freed at the end.

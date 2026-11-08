@@ -203,6 +203,8 @@ struct Request {
     /// `crop="active"`: raw outputs cropped to the active area.
     active: bool,
     tile: Option<usize>,
+    /// `camera_profile="embedded"`: use the profile stored in the DNG.
+    embedded_profile: bool,
 }
 
 fn is_raw_output(o: OutputFormat) -> bool {
@@ -397,8 +399,9 @@ impl RawFile {
             black_point: levels.1,
             white_point: levels.2,
             preview_fallback,
+            camera_profile: None,
         };
-        Ok(Request { opts, backend: be.name().to_string(), active, tile: None })
+        Ok(Request { opts, backend: be.name().to_string(), active, tile: None, embedded_profile: false })
     }
 
     /// Decode with the GIL released; returns `(array, info)`.
@@ -410,6 +413,13 @@ impl RawFile {
                 let raw = &inner.raw;
                 guarded(|| {
                     apply_active_crop(raw, &mut req);
+                    if req.embedded_profile {
+                        req.opts.camera_profile = Some(raw.embedded_camera_profile().ok_or_else(|| {
+                            Failure::Flash(flashraw::Error::InvalidArgument(
+                                "the file has no embedded camera profile".into(),
+                            ))
+                        })?);
+                    }
                     let t0 = std::time::Instant::now();
                     let frame = with_pool(&mut req.opts, |opts| match req.tile {
                         Some(i) => raw.decode_tile(i, opts),
@@ -573,7 +583,8 @@ impl RawFile {
         output="raw-u16", backend="auto", threads=None, region=None, crop=None, demosaic="bilinear",
         apply_opcodes=true, corruption_policy="recover", tile=None, exposure=0.0, black_point=0.0,
         white_point=1.0, preview_fallback=false, color_space="srgb", output_profile=None,
-        intent="perceptual", black_point_compensation=false, highlights="clip", white_balance="as-shot"
+        intent="perceptual", black_point_compensation=false, highlights="clip", white_balance="as-shot",
+        camera_profile=None, camera_profile_embedded=false
     ))]
     #[allow(clippy::too_many_arguments)]
     fn decode<'py>(
@@ -598,7 +609,12 @@ impl RawFile {
         black_point_compensation: bool,
         highlights: &str,
         white_balance: &str,
+        camera_profile: Option<&[u8]>,
+        camera_profile_embedded: bool,
     ) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
+        if camera_profile.is_some() && camera_profile_embedded {
+            return Err(invalid(py, "`camera_profile` is either a profile or \"embedded\", not both"));
+        }
         let mut req = Self::parse_request(
             py,
             output,
@@ -618,6 +634,10 @@ impl RawFile {
             return Err(invalid(py, "`tile` and `region` cannot be combined"));
         }
         req.tile = tile;
+        req.embedded_profile = camera_profile_embedded;
+        if let Some(bytes) = camera_profile {
+            req.opts.camera_profile = Some(flashraw::CameraProfile::from_dcp(bytes).map_err(|e| to_pyerr(py, e))?);
+        }
         self.run_decode(py, req)
     }
 

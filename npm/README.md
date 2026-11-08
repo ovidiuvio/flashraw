@@ -280,6 +280,7 @@ const f = await raw.decode({
   outputProfile: undefined, // RGB outputs: Uint8Array of an ICC profile to convert to (instead of colorSpace)
   intent: 'perceptual',     // for outputProfile: 'perceptual' | 'relative' | 'saturation' | 'absolute'
   blackPointCompensation: false, // for outputProfile (profiles with lookup tables)
+  cameraProfile: undefined, // RGB outputs: Uint8Array of a DNG camera profile (.dcp), or 'embedded' (the DNG's own); CPU only
   limits: { maxSamples: 4e8 },
 });
 f.data;            // Uint16Array (raw-u16, rgb16, linear-rgb16, linear-rgb-f16, f16 sample types)

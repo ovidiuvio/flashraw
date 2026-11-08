@@ -64,6 +64,10 @@ pub(crate) fn default_decode_options() -> flashraw_decode_options {
         output_profile_len: 0,
         white_balance: 0,
         reserved: 0,
+        camera_profile: std::ptr::null(),
+        camera_profile_len: 0,
+        camera_profile_embedded: 0,
+        reserved2: 0,
     }
 }
 
@@ -82,7 +86,11 @@ pub unsafe extern "C" fn flashraw_decode_options_init(opts: *mut flashraw_decode
     })
 }
 
-pub(crate) fn to_decode_options(o: &flashraw_decode_options, base: flashraw::Limits) -> FfiResult<DecodeOptions> {
+pub(crate) fn to_decode_options(
+    o: &flashraw_decode_options,
+    base: flashraw::Limits,
+    raw: &flashraw::FlashRaw<'_>,
+) -> FfiResult<DecodeOptions> {
     let mut d = DecodeOptions {
         backend: backend_from(o.backend)?,
         output: output_from(o.output)?,
@@ -101,7 +109,21 @@ pub(crate) fn to_decode_options(o: &flashraw_decode_options, base: flashraw::Lim
         preview_fallback: o.preview_fallback != 0,
         color_space: color_space_from(o.color_space)?,
         output_profile: None,
+        camera_profile: None,
     };
+    if !o.camera_profile.is_null() {
+        if o.camera_profile_embedded != 0 {
+            return Err(FfiError::invalid("set either `camera_profile` or `camera_profile_embedded`, not both"));
+        }
+        // SAFETY: the caller guarantees `camera_profile_len` readable bytes (documented on the field).
+        let bytes = unsafe { std::slice::from_raw_parts(o.camera_profile, o.camera_profile_len) };
+        d.camera_profile = Some(flashraw::CameraProfile::from_dcp(bytes)?);
+    } else if o.camera_profile_embedded != 0 {
+        d.camera_profile = Some(
+            raw.embedded_camera_profile()
+                .ok_or_else(|| FfiError::invalid("the file has no embedded camera profile"))?,
+        );
+    }
     if !o.output_profile.is_null() {
         // SAFETY: the caller guarantees `output_profile_len` readable bytes (documented on the field).
         let bytes = unsafe { std::slice::from_raw_parts(o.output_profile, o.output_profile_len) };
@@ -149,7 +171,7 @@ pub unsafe extern "C" fn flashraw_decode(
         let f = unsafe { file_ref(file) }?;
         // SAFETY: as above.
         let o = unsafe { read_versioned(opts, default_decode_options(), "flashraw_decode_options") }?;
-        let opts = to_decode_options(&o, f.limits)?;
+        let opts = to_decode_options(&o, f.limits, &f.raw)?;
         let frame = f.raw.decode(opts)?;
         let s = &frame.stats.backend;
         let h = flashraw_frame {

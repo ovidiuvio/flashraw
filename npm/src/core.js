@@ -664,13 +664,13 @@ export class DecodedFrame {
   }
 }
 
-/** Base64 of ICC profile bytes (Uint8Array, ArrayBuffer or any view), for the options JSON. */
-function profileToBase64(p) {
+/** Base64 of profile bytes (an ICC or DCP profile as Uint8Array, ArrayBuffer or any view), for the options JSON. */
+function profileToBase64(p, option = 'outputProfile') {
   let u8;
   if (p instanceof Uint8Array) u8 = p;
   else if (ArrayBuffer.isView(p)) u8 = new Uint8Array(p.buffer, p.byteOffset, p.byteLength);
   else if (p instanceof ArrayBuffer || Object.prototype.toString.call(p) === '[object SharedArrayBuffer]') u8 = new Uint8Array(p);
-  else throw new InvalidArgumentError('`outputProfile` must be a Uint8Array (or ArrayBuffer) of ICC profile bytes');
+  else throw new InvalidArgumentError(`\`${option}\` must be a Uint8Array (or ArrayBuffer) of profile bytes`);
   let bin = '';
   for (let i = 0; i < u8.length; i += 0x8000) bin += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
   return btoa(bin);
@@ -1104,6 +1104,12 @@ export class FlashRaw {
     const t0 = now();
     const { backend = 'auto', fallback = 'cpu', zeroCopy = false, init: _init, ...rest } = options;
     if (rest.outputProfile != null) rest.outputProfile = profileToBase64(rest.outputProfile);
+    if (rest.cameraProfile != null && rest.cameraProfile !== 'embedded') {
+      if (typeof rest.cameraProfile === 'string') {
+        throw new InvalidArgumentError('`cameraProfile` must be "embedded" or a Uint8Array (a .dcp file)');
+      }
+      rest.cameraProfile = { dcp: profileToBase64(rest.cameraProfile, 'cameraProfile') };
+    }
     if (fallback !== 'cpu' && fallback !== 'error') {
       throw new InvalidArgumentError(`\`fallback\` must be "cpu" or "error", got ${JSON.stringify(fallback)}`);
     }

@@ -481,6 +481,19 @@ pub struct flashraw_decode_options {
     pub white_balance: i32,
     /// Reserved, zero.
     pub reserved: i32,
+    /// DNG camera profile (`.dcp` file contents) to render the RGB outputs with (NULL: none).
+    /// Replaces the file's colour matrices and applies the profile's hue/sat map, look table
+    /// and tone curve. CPU only (the GPU backend decodes on the CPU for it). Read during
+    /// `flashraw_decode()` only. An invalid profile fails with
+    /// `FLASHRAW_ERROR_INVALID_ARGUMENT` or `FLASHRAW_ERROR_UNSUPPORTED_FORMAT`.
+    pub camera_profile: *const u8,
+    /// Size of `camera_profile` in bytes.
+    pub camera_profile_len: usize,
+    /// Non-zero: use the camera profile embedded in the DNG being decoded (an error when it
+    /// has none). Not combinable with `camera_profile`. Default 0.
+    pub camera_profile_embedded: i32,
+    /// Reserved, zero.
+    pub reserved2: i32,
 }
 
 /// Size of the first published layout of each versioned struct. Callers built against an
@@ -750,10 +763,11 @@ mod tests {
         // Grown since: exposure, black_point, white_point, preview_fallback (80 bytes), then
         // color_space, intent, black_point_compensation, highlights and the output profile
         // pointer and length (pointer-sized, so the total depends on the platform), then white_balance
+        // and a reserved word, then the camera profile pointer and length, camera_profile_embedded
         // and a reserved word.
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, preview_fallback), 76);
         assert_eq!(std::mem::offset_of!(flashraw_decode_options, color_space), 80);
-        assert_eq!(size_of::<flashraw_decode_options>(), 104 + 2 * size_of::<usize>());
+        assert_eq!(size_of::<flashraw_decode_options>(), 112 + 4 * size_of::<usize>());
         assert_eq!(size_of::<flashraw_preview_info>(), flashraw_preview_info::MIN_SIZE);
         assert_eq!(size_of::<flashraw_decode_stats>(), flashraw_decode_stats::MIN_SIZE);
         assert_eq!(size_of::<flashraw_rect>(), 16);

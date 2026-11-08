@@ -602,6 +602,14 @@ export interface DecodeOptions {
    * reject with `InvalidArgumentError`. Not available with the GPU backend (the CPU is used).
    */
   outputProfile?: Uint8Array | ArrayBuffer;
+  /**
+   * RGB outputs: render with a DNG camera profile: the bytes of a `.dcp` file, or `'embedded'` for
+   * the profile stored in the DNG being decoded (rejects with `InvalidArgumentError` when it has
+   * none). The profile's colour matrices replace the file's, and its hue/sat map, look table and
+   * tone curve are applied; `exposure` and the black and white points come after. Three-colour
+   * sensors only. CPU only: the WebGPU build falls back to the CPU for it.
+   */
+  cameraProfile?: Uint8Array | ArrayBuffer | 'embedded';
   /** Rendering intent for `outputProfile` (default `'perceptual'`). */
   intent?: RenderingIntent;
   /** Black point compensation for `outputProfile` (profiles with lookup tables; default false). */
