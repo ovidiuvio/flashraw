@@ -55,7 +55,7 @@ macOS; the Windows MSVC build of the C client is defined in the manual workflow 
 | `libraw_raw2image`, `libraw_free_image`, `libraw_subtract_black` | implemented |
 | `libraw_adjust_sizes_info_only`, `libraw_adjust_to_raw_inset_crop` | implemented |
 | `libraw_get_raw_width/height`, `libraw_get_iwidth/iheight`, `libraw_get_cam_mul`, `libraw_get_pre_mul`, `libraw_get_rgb_cam`, `libraw_get_color_maximum`, `libraw_get_iparams`, `libraw_get_lensinfo`, `libraw_get_imgother` | implemented |
-| `libraw_set_demosaic`, `_output_color`, `_adjust_maximum_thr`, `_user_mul`, `_output_bps`, `_gamma`, `_no_auto_bright`, `_bright`, `_highlight`, `_fbdd_noiserd`, `_output_tif` | implemented (set `params`; see deviations for which ones affect processing) |
+| `libraw_set_demosaic`, `_output_color`, `_adjust_maximum_thr`, `_user_mul`, `_output_bps`, `_gamma`, `_no_auto_bright`, `_bright`, `_highlight`, `_fbdd_noiserd`, `_output_tif` | implemented (set `params`; see deviations for which ones affect processing; `fbdd_noiserd` 1 and 2 set the smoothing floor of the edge-aware demosaic to low and high) |
 | `libraw_COLOR`, `libraw_get_decoder_info`, `libraw_unpack_function_name` | implemented |
 | `libraw_strerror`, `libraw_strprogress`, `libraw_version`, `libraw_versionNumber`, `libraw_capabilities` | implemented |
 | `libraw_cameraList`, `libraw_cameraCount` | return an empty list / 0 (FlashRaw identifies cameras from metadata) |

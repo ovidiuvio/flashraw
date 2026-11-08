@@ -111,6 +111,31 @@ pub fn camera4_daylight_wb(cm: &ColorMatrices) -> Option<[f32; 4]> {
     m.multipliers_for([1.0; 3])?.try_into().ok()
 }
 
+/// Whether the white balance of a frame can be replaced: a three-colour mosaic the camera did not
+/// balance, not Foveon.
+fn wb_replaceable(info: &FrameInfo) -> bool {
+    !info.white_balance_applied
+        && info.layout != SensorLayout::Foveon
+        && info.cfa.is_some_and(|p| p.four_colour_order().is_none())
+}
+
+/// Daylight (D65) multipliers of a frame from its colour matrix (`WhiteBalanceMode::Daylight`),
+/// `None` where the balance cannot be replaced or the file has no 3-row matrix.
+pub(crate) fn daylight_white_balance(info: &FrameInfo) -> Option<[f32; 4]> {
+    if !wb_replaceable(info) {
+        return None;
+    }
+    let m = info.color_matrices.preferred().filter(|m| m.rows == 3)?;
+    let v = m.multipliers_for([1.0; 3])?;
+    explicit_white_balance(info, [v[0], v[1], v[2]])
+}
+
+/// Explicit red, green and blue multipliers (green normalised to 1) as the four multipliers of a
+/// frame; `None` where the balance cannot be replaced.
+pub(crate) fn explicit_white_balance(info: &FrameInfo, m: [f32; 3]) -> Option<[f32; 4]> {
+    wb_replaceable(info).then(|| [m[0] / m[1], 1.0, m[2] / m[1], 1.0])
+}
+
 /// Measure per-position black levels from masked (optical black) areas.
 /// Returns a pattern with the CFA's dimensions (or 1x1 without CFA), anchored at buffer (0, 0);
 /// images with several samples per pixel get one value per sample.
@@ -341,6 +366,8 @@ pub struct DevelopParams {
     pub highlights: Highlights,
     /// The model of [`Highlights::Reconstruct`] (predicts nothing by default).
     pub recon: ReconModel,
+    /// Smoothing level of the edge-aware demosaic.
+    pub noise: crate::NoiseReduction,
     /// Transfer curve of the display encoders (sRGB unless an output colour space or
     /// profile is set; the matching primaries are already folded into the matrices).
     pub curve: OutputCurve,
@@ -372,6 +399,7 @@ impl DevelopParams {
             levels: None,
             highlights: Highlights::Clip,
             recon: ReconModel::default(),
+            noise: crate::NoiseReduction::Auto,
             curve: OutputCurve::Srgb,
         }
     }
@@ -1141,6 +1169,7 @@ fn kernel_with<'a>(
             None => kr.normalize_row(y, row),
         };
         plan.set_noise_from(w, h, g, &mut fetch);
+        plan.apply_level(params.noise);
         k.edge = Some(plan);
     }
     k
@@ -1816,6 +1845,25 @@ mod tests {
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
         info.white_balance = None;
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
+    }
+
+    #[test]
+    fn daylight_and_explicit_white_balance() {
+        let mut info = FrameInfo::new(8, 8, 12);
+        info.cfa = Some(CfaPattern::RGGB);
+        // No matrix: nothing to compute; explicit multipliers are normalised by green.
+        assert_eq!(daylight_white_balance(&info), None);
+        assert_eq!(explicit_white_balance(&info, [3.0, 2.0, 4.0]), Some([1.5, 1.0, 2.0, 1.0]));
+        let cm = ColorMatrix::new(Illuminant::D65, 3, vec![0.5, 0.2, 0.1, 0.1, 1.0, 0.1, 0.0, 0.2, 0.8]).unwrap();
+        info.color_matrices.color.push(cm.clone());
+        let wb = daylight_white_balance(&info).unwrap();
+        // The camera response to D65 times the multipliers is equal in every channel.
+        let r = cm.multipliers_for([1.0; 3]).unwrap();
+        assert!((wb[0] - r[0] / r[1]).abs() < 1e-5 && (wb[2] - r[2] / r[1]).abs() < 1e-5 && wb[1] == 1.0);
+        // Camera-balanced frames keep their own balance.
+        info.white_balance_applied = true;
+        assert_eq!(daylight_white_balance(&info), None);
+        assert_eq!(explicit_white_balance(&info, [1.0, 1.0, 1.0]), None);
     }
 
     #[test]

@@ -955,7 +955,7 @@ setter!(
     libraw_set_highlight, c_int, |p, value| p.highlight = value
 );
 setter!(
-    /// `params.fbdd_noiserd` (no effect here).
+    /// `params.fbdd_noiserd`: 1 and 2 set a smoothing floor for the edge-aware demosaic (`user_qual` 1 or more).
     libraw_set_fbdd_noiserd, c_int, |p, value| p.fbdd_noiserd = value
 );
 setter!(

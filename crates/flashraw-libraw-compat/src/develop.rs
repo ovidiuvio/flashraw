@@ -164,6 +164,13 @@ pub fn dcraw_process(d: &mut libraw_data_t, st: &mut State) -> c_int {
     let crop = Rect::new(left, top, s.width as u32, s.height as u32);
     let mut params = DevelopParams::new(&info, demosaic, crop);
     params.orientation = Orientation::Normal;
+    // `fbdd_noiserd` 1 (light) and 2 (full) set a floor on the edge-aware demosaic's smoothing; 0
+    // (off, the default) keeps the automatic level.
+    params.noise = match d.params.fbdd_noiserd {
+        1 => flashraw::NoiseReduction::Low,
+        2.. => flashraw::NoiseReduction::High,
+        _ => flashraw::NoiseReduction::Auto,
+    };
     // `highlight` 2 (blend) keeps the colour of pixels above white; 3 to 9 (reconstruct) fade
     // clipped pixels to white instead of rebuilding them; 0 (clip) and 1 (unclip) clip.
     params.highlights = match d.params.highlight {

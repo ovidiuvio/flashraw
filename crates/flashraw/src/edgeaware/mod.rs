@@ -292,6 +292,16 @@ impl Plan {
         self.beta = 0.5 * ((nu - 2e-4) / 6e-4).clamp(0.0, 1.0);
     }
 
+    /// Apply a user level to the estimated smoothing weight: `Off` clears it, the other levels
+    /// are floors (`Auto` keeps the estimate).
+    pub(crate) fn apply_level(&mut self, level: crate::NoiseReduction) {
+        match level.floor() {
+            None => {}
+            Some(0.0) => self.beta = 0.0,
+            Some(f) => self.beta = self.beta.max(f),
+        }
+    }
+
     /// Bayer: the filters, the two-pass luminance-gated chroma stage and, on a noisy frame, a
     /// gated smoothing (module docs, steps 4 and 5). Same contract as [`Plan::develop`].
     #[inline(always)]
@@ -809,6 +819,24 @@ mod tests {
         assert!(noisy > 0.45 && noisy <= 0.5, "{noisy}");
         let mid = beta_for(0.017, &mut gauss);
         assert!(mid > 0.0 && mid < 0.5, "{mid}");
+    }
+
+    #[test]
+    fn noise_levels_are_floors_and_off_clears() {
+        use crate::NoiseReduction as N;
+        let mut plan = Plan::new(&CfaPattern::RGGB, &chan(), (0, 0)).unwrap();
+        for (level, est, want) in [
+            (N::Auto, 0.3, 0.3),
+            (N::Off, 0.4, 0.0),
+            (N::Low, 0.0, 0.25),
+            (N::Low, 0.4, 0.4),
+            (N::Medium, 0.1, 0.5),
+            (N::High, 0.5, 0.8),
+        ] {
+            plan.beta = est;
+            plan.apply_level(level);
+            assert_eq!(plan.beta, want, "{level:?} on {est}");
+        }
     }
 
     #[test]

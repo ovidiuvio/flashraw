@@ -26,6 +26,7 @@ impl WhiteBalanceMode {
         Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
             "as-shot" | "asshot" | "camera" => WhiteBalanceMode::AsShot,
             "auto" => WhiteBalanceMode::Auto,
+            "daylight" | "d65" => WhiteBalanceMode::Daylight,
             _ => return None,
         })
     }
@@ -35,6 +36,44 @@ impl WhiteBalanceMode {
         match self {
             WhiteBalanceMode::AsShot => "as-shot",
             WhiteBalanceMode::Auto => "auto",
+            WhiteBalanceMode::Daylight => "daylight",
+        }
+    }
+}
+
+impl NoiseReduction {
+    /// Parse a level name (`auto`, `off`, `low`, `medium`, `high`; case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s.to_ascii_lowercase().as_str() {
+            "auto" => NoiseReduction::Auto,
+            "off" | "none" => NoiseReduction::Off,
+            "low" => NoiseReduction::Low,
+            "medium" | "med" => NoiseReduction::Medium,
+            "high" => NoiseReduction::High,
+            _ => return None,
+        })
+    }
+
+    /// Canonical name, accepted by [`NoiseReduction::parse`].
+    pub fn name(self) -> &'static str {
+        match self {
+            NoiseReduction::Auto => "auto",
+            NoiseReduction::Off => "off",
+            NoiseReduction::Low => "low",
+            NoiseReduction::Medium => "medium",
+            NoiseReduction::High => "high",
+        }
+    }
+
+    /// Smoothing weight of this level (module `edgeaware`, step 5): `None` keeps the one
+    /// estimated from the frame.
+    pub(crate) fn floor(self) -> Option<f32> {
+        match self {
+            NoiseReduction::Auto => None,
+            NoiseReduction::Off => Some(0.0),
+            NoiseReduction::Low => Some(0.25),
+            NoiseReduction::Medium => Some(0.5),
+            NoiseReduction::High => Some(0.8),
         }
     }
 }
@@ -230,6 +269,32 @@ pub enum WhiteBalanceMode {
     /// few near-neutral areas keep the as-shot balance. CPU only (the GPU backend decodes on
     /// the CPU for it).
     Auto,
+    /// Daylight (D65) from the file's colour matrix: the neutral that the matrix maps to
+    /// equal red, green and blue. Files without a usable matrix, frames the camera already
+    /// balanced and files without a colour filter array keep the as-shot balance.
+    Daylight,
+}
+
+/// How strongly the edge-aware demosaic smooths noise (`DecodeOptions::noise_reduction`).
+///
+/// The smoothing is part of [`Demosaic::EdgeAware`]: each pixel moves towards the mean of its
+/// 3x3 window, weighted so that edges and detail are kept. Bilinear and half-size decodes do not
+/// smooth. It is a light, colour-preserving filter, not a substitute for a dedicated denoiser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
+pub enum NoiseReduction {
+    /// Estimated from the noise of the frame: none on clean frames (the default).
+    #[default]
+    Auto,
+    /// No smoothing at all.
+    Off,
+    /// At least a quarter of the way to the local mean, more on noisy frames.
+    Low,
+    /// At least half way.
+    Medium,
+    /// At least four fifths of the way.
+    High,
 }
 
 /// What a decode does when the sensor data is corrupt or truncated.
@@ -297,6 +362,13 @@ pub struct DecodeOptions {
     pub highlights: Highlights,
     /// White balance of RGB outputs. Default: [`WhiteBalanceMode::AsShot`].
     pub white_balance: WhiteBalanceMode,
+    /// Explicit red, green and blue multipliers of the camera RGB (green is normalised to 1),
+    /// replacing `white_balance`. Values must be positive and finite or the decode fails with
+    /// `Error::InvalidArgument`. Frames the camera already balanced, four-colour sensors and
+    /// Foveon keep their own balance. CPU only. Default: none.
+    pub white_balance_multipliers: Option<[f32; 3]>,
+    /// Smoothing of the edge-aware demosaic. Default: [`NoiseReduction::Auto`].
+    pub noise_reduction: NoiseReduction,
     /// Correct the lateral chromatic aberration of Bayer frames (16-bit, three colours) before
     /// demosaicing: radial scale factors of the red and blue planes against green are estimated
     /// from the frame and the red and blue samples resampled. Frames without enough edges, and
@@ -381,6 +453,8 @@ impl Default for DecodeOptions {
             demosaic: Demosaic::Bilinear,
             highlights: Highlights::Clip,
             white_balance: WhiteBalanceMode::AsShot,
+            white_balance_multipliers: None,
+            noise_reduction: NoiseReduction::Auto,
             chromatic_aberration: false,
             apply_opcodes: true,
             limits: Limits::default(),

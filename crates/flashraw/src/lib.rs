@@ -133,7 +133,8 @@ pub use flashraw_core::{
 pub use frame::{BackendReport, DecodeStatistics, FrameSource, RawFrame, RawPixelData};
 pub use icc::{OutputProfile, RenderingIntent, icc_supported};
 pub use options::{
-    Backend, CorruptionPolicy, DecodeOptions, Demosaic, Highlights, OutputFormat, ParseOptionError, WhiteBalanceMode,
+    Backend, CorruptionPolicy, DecodeOptions, Demosaic, Highlights, NoiseReduction, OutputFormat, ParseOptionError,
+    WhiteBalanceMode,
 };
 pub use source::Source;
 
@@ -474,10 +475,26 @@ impl<'a> FlashRaw<'a> {
                 let mut params = setup.apply(process::DevelopParams::new(&frame_info_for_post, opts.demosaic, crop));
                 params.levels = levels;
                 params.highlights = opts.highlights;
+                params.noise = opts.noise_reduction;
                 if opts.chromatic_aberration {
                     ca::correct_image(&mut img, &frame_info_for_post, origin);
                 }
-                if opts.white_balance == WhiteBalanceMode::Auto {
+                if let Some(m) = opts.white_balance_multipliers {
+                    if !m.iter().all(|v| v.is_finite() && *v > 0.0) {
+                        return Err(Error::InvalidArgument(
+                            "white_balance_multipliers must be positive and finite".into(),
+                        ));
+                    }
+                    if let Some(wb) = process::explicit_white_balance(&frame_info_for_post, m) {
+                        params.wb = wb;
+                        params.dm_wb = wb;
+                    }
+                } else if opts.white_balance == WhiteBalanceMode::Daylight {
+                    if let Some(wb) = process::daylight_white_balance(&frame_info_for_post) {
+                        params.wb = wb;
+                        params.dm_wb = wb;
+                    }
+                } else if opts.white_balance == WhiteBalanceMode::Auto {
                     if let Some(wb) = process::auto_white_balance(&img, &frame_info_for_post, origin, params.wb) {
                         params.wb = wb;
                         params.dm_wb = wb;
