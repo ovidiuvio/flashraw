@@ -59,8 +59,8 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_BILINEAR = 0,
     /// 2x2 superpixel binning: half resolution, fastest.
     FLASHRAW_DEMOSAIC_HALF_SIZE = 1,
-    /// Edge-aware 7x7 filters for Bayer and X-Trans sensors (other sensors: bilinear). CPU
-    /// only; several times slower than bilinear, far fewer artefacts.
+    /// Edge-aware 7x7 filters for Bayer and X-Trans sensors (other sensors: bilinear). Several
+    /// times slower than bilinear, far fewer artefacts; also runs on the GPU backend.
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
 }
 

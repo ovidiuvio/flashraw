@@ -11,9 +11,11 @@ Bayer and X-Trans sensors. Other patterns (four-colour, Foveon, monochrome, stag
 |---|---|---|---|---|
 | name | `--demosaic edge-aware` | `demosaic="edge-aware"` | `demosaic: 'edge-aware'` | `FLASHRAW_DEMOSAIC_EDGE_AWARE` |
 
-It is CPU only. `Backend::Auto` and `Backend::Gpu` decode on the CPU when it is selected (as they do for output
-profiles with lookup tables); GPU-resident outputs reject it with `NotAvailable`. The result may change between
-minor versions as the filters are retrained, so pin it per version if you hash outputs.
+It runs on the CPU and on the GPU backend (`Backend::Gpu`, `Backend::Auto`, GPU-resident outputs): the GPU kernels
+are the same algorithm in the same order of operations and agree with the CPU within f32 rounding (see
+[GPU backend](../gpu.md#edge-aware-demosaic)); the CPU result is the reference and is bit-identical for any thread
+count, band or crop. The result may change between minor versions as the filters are retrained, so pin it per
+version if you hash outputs.
 
 ## Method
 
@@ -106,7 +108,8 @@ issue (mean Laplacian of R-G and B-G over the Laplacian of luma, of the sRGB-enc
 
 ## Limits
 
-* CPU only; several times slower than bilinear (table above).
+* Several times slower than bilinear (table above): 4x to 9x the develop time on the CPU and about 6x the kernel
+  time on the GPU, where it is still several times faster than the CPU.
 * Hard saturated colour edges (pure red against green) lose a little sharpness in the colour channels because of
   the chroma stage; bilinear does not.
 * The weights assume a roughly neutral scene after white balance (the training data is white balanced); strongly

@@ -176,8 +176,9 @@ pub enum Demosaic {
     HalfSize,
     /// Directionally weighted 7x7 filters for Bayer and X-Trans sensors: far fewer zipper
     /// and false-colour artefacts than [`Demosaic::Bilinear`], several times slower. Other
-    /// sensors use bilinear. CPU only (the GPU backend falls back to the CPU for it); the
-    /// result may change between minor versions as the filters improve.
+    /// sensors use bilinear. The GPU backend runs it too (about 6x its bilinear kernel time);
+    /// the GPU result equals the CPU's within rounding. It may change between minor versions
+    /// as the filters improve.
     EdgeAware,
 }
 

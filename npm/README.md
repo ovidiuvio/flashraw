@@ -266,7 +266,7 @@ const f = await raw.decode({
   output: 'raw-u16',        // 'raw-u16' | 'raw-f32' | 'normalized' | 'linear-rgb' | 'linear-rgb16'
                             // | 'linear-rgb-f16' | 'rgba8' | 'rgb16'
   backend: 'auto',          // 'auto' | 'cpu' (scalar reference) | 'cpu-simd' | 'gpu'
-  demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size' | 'edge-aware' (Bayer/X-Trans, CPU only)
+  demosaic: 'bilinear',     // RGB outputs: 'bilinear' | 'half-size' | 'edge-aware' (Bayer/X-Trans, slower, cleaner)
   whiteBalance: 'as-shot',  // RGB outputs: 'as-shot' | 'auto' (refine the camera's over the near-neutral areas; CPU only)
   highlights: 'clip',       // RGB outputs: 'clip' | 'neutral' (fade clipped pixels to white) | 'blend' (also keep the colour of pixels above white after white balance) | 'reconstruct' (rebuild clipped channels from the frame's unclipped blocks); CPU only
   crop: true,               // RGB outputs: apply the default crop; raw outputs: 'active' = active area only

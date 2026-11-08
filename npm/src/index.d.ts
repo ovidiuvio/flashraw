@@ -521,8 +521,8 @@ export interface DecodeOptions {
   output?: OutputFormat | GpuOutputFormat;
   /**
    * Demosaic for RGB outputs. `half-size` = 2x2 binning (fast); `edge-aware` = directionally
-   * weighted filters for Bayer and X-Trans sensors (much cleaner, several times slower, CPU
-   * only: the WebGPU build falls back to the CPU for it). Default `bilinear`.
+   * weighted filters for Bayer and X-Trans sensors (much cleaner, several times slower).
+   * Default `bilinear`.
    */
   demosaic?: 'bilinear' | 'half-size' | 'edge-aware';
   /**

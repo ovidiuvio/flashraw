@@ -10,7 +10,8 @@ data-parallel:
 
 * unpacking uniformly bit-packed payloads, read straight from the file bytes;
 * black/white normalisation;
-* the fused develop: demosaic → white balance → colour matrix → sRGB → orientation.
+* the fused develop: demosaic → white balance → colour matrix → sRGB → orientation;
+* the edge-aware demosaic of Bayer and X-Trans frames, as several passes ending in the same encoder.
 
 ## Architecture
 
@@ -28,6 +29,7 @@ shaders/           WGSL sources (shared by native and browser builds, include_st
   unpack.wgsl      packed/u16 → u16 (+ LUT)
   normalize.wgsl   → black-subtracted, white-normalised f32
   develop.wgsl     fused develop (bilinear `develop`, 2x2 `develop_half`)
+  edge.wgsl        edge-aware demosaic: one entry point per stage (see "Edge-aware demosaic")
   to_texture.wgsl  RGBA8 buffer → rgba8unorm storage texture (interop)
 crates/flashraw/src/gpu.rs   facade: backend selection, GPU decode path, RawFrame::download
 ```
@@ -76,7 +78,7 @@ no adapter exists.
 | develop → 16-bit sRGB (`Rgb16`, oriented), linear 16-bit, linear half floats, with and without exposure/black/white points | `process::develop_encoded` | one code / one half-float ULP on < 1 % of samples (Metal: ≤ 0.21 % synthetic, ≤ 0.07 % on real files; software Vulkan: 0) |
 | half-size 2x2 superpixel | `process::develop` (HalfSize) | same as above |
 | neutral and blend highlight modes (`Highlights::Neutral`, `Highlights::Blend`) | not implemented on the GPU | same: CPU fallback, `NotAvailable` for GPU-resident outputs |
-| edge-aware demosaic | not implemented on the GPU (CPU only, see [edge-aware-demosaic](design/edge-aware-demosaic.md)) | `Backend::Auto` and `Backend::Gpu` decode on the CPU; GPU-resident outputs return `NotAvailable` |
+| edge-aware demosaic, Bayer and X-Trans ([edge-aware-demosaic](design/edge-aware-demosaic.md), [section below](#edge-aware-demosaic)) | `process::develop` with `Demosaic::EdgeAware` | max 1.3e-6, mean 5e-8 (linear f32, synthetic, bound 5e-4 / 1e-6); real files: 1 code of 65535 on < 0.1 % of the samples |
 | DNG camera profiles (`camera_profile`: forward matrices, hue/sat map, look table, tone curve) | not implemented on the GPU (CPU only, see [colour management](color-management.md)) | same: CPU fallback, `NotAvailable` for GPU-resident outputs |
 
 The GPU path reproduces the CPU semantics exactly:
@@ -118,6 +120,71 @@ stages its 18x18 neighbourhood of *normalised* samples in workgroup memory, then
 demosaics. The steps run in one dispatch with no full-size intermediates:
 unpack → linearise → normalise → demosaic → WB → clip → matrix → sRGB → orientation →
 store.
+
+## Edge-aware demosaic
+
+`Demosaic::EdgeAware` (Bayer and X-Trans; other patterns, several components per pixel and four-colour
+sensors develop bilinearly, as on the CPU) runs on the GPU for every RGB output, including the `Gpu*` resident
+ones. Method: [edge-aware-demosaic](design/edge-aware-demosaic.md); CPU reference:
+`crates/flashraw/src/edgeaware/mod.rs`. `Highlights::Neutral`/`Blend` and `WhiteBalanceMode::Auto` still run on the
+CPU.
+
+It is several dispatches per band instead of one fused kernel, because every stage needs the stage before it in a
+neighbourhood. `shaders/edge.wgsl` (compiled together with `common.wgsl` and `develop.wgsl`, bind group 1 for the
+scratch buffer and the filter tables) has one entry point per stage:
+
+| Pass | Reads | Writes (planes of the scratch buffer) |
+|---|---|---|
+| `edge_mosaic` | source samples (unpack, linearise, normalise as in `develop`) | white balanced mosaic, clipped at 1 |
+| `edge_g0` | mosaic (7x7, workgroup memory) | `sqrt(G0)`, the first green estimate |
+| `edge_rgb` | mosaic, `sqrt(G0)` (3x3 gradients, workgroup memory) | the four-direction weights and the weighted sum of the 7x7 filters per missing colour: R, G, B |
+| `edge_bayer_d1`, `edge_bayer_v2` (Bayer) | R, G, B | the two luminance-gated colour-difference passes |
+| `edge_xtrans_v2` (X-Trans) | R, G, B | 3x3 median of R-G and B-G |
+| `develop_edge` | cleaned RGB | optional smoothing, white balance of the border, matrix, levels, encoding, orientation: the existing `finish` |
+
+* **Filter tables** are uploaded once per CFA period (`GpuContext::edge_table`, ~95 KB for X-Trans) from the same
+  `bayer.bin` / `xtrans.bin` the CPU uses; the directional filters are transposed so that the four directions of a
+  tap are one `vec4` (this took the X-Trans kernel from 187 ms to 70 ms on a 40 MP frame, `rgb16` output).
+* **Borders.** Pixels closer than `edgeaware::HALO` (8) to the frame (or region window) border are bilinear, with the
+  bilinear arithmetic of `develop`, as on the CPU. The edge-aware passes only run over the interior pixels of the
+  band plus an 8-pixel margin.
+* **Smoothing weight `beta`** comes from the noise of the frame (48 rows, `Plan::set_noise_from`). It is computed on
+  the host from the same normalised rows the CPU uses (for packed files the 48 rows are unpacked on the host) and
+  passed as a uniform, so the GPU and the CPU always agree on whether a frame is smoothed.
+* **Memory and bands.** The passes keep 8 `f32` planes per pixel in one scratch buffer (32 bytes per pixel, a 40 MP
+  frame would need 1.3 GB): a band is limited to 512 MB of scratch (and to one storage binding), so an 18 MP
+  frame runs in 2 bands and a 40 MP one in 3 on the M1 Ultra, each band reading `halo` extra rows. Bands do not
+  change the result (tested with 11 bands of 12 rows).
+* **Fallbacks.** If the CFA is not Bayer or X-Trans, or the frame has more than one component per pixel, the GPU develops
+  bilinear exactly like the CPU does for `EdgeAware`.
+
+Equivalence with the CPU (`crates/flashraw-gpu/tests/edge_aware.rs`, GPU tests skip without an adapter): the GPU
+performs the same operations in the same order, so only fused multiply-add contraction and division / `sqrt`
+rounding differ. Apple M1 Ultra (Metal):
+
+* synthetic sharp-edged scenes, RGGB / GBRG / BGGR / X-Trans / shifted X-Trans, sensor origins that are not a multiple
+  of the pattern, crops, region windows, frames from 12x9 to 203x141, banded, clean (`beta` = 0) and noisy (`beta` =
+  0.5): max |diff| of the linear f32 output **1.3e-6**, mean **4.6e-8** (bound in the test: 5e-4 / 1e-6); `Rgba8` within
+  one code on < 0.2 % of the samples (the test's bounds);
+* real files (Canon EOS Rebel T2i CR2, 18 MP Bayer; Fujifilm X-T50 RAF, 40 MP X-Trans), `rgb16` and `linear-rgb16`
+  through the CLI: max **1 code of 65535**, 0.02 % to 0.08 % of the samples differ by that one code.
+
+Timings, `flashraw benchmark --output rgba8` (median of 10, Apple M1 Ultra, 20 CPU threads; entropy decoding
+is CPU in both columns):
+
+| File | Demosaic | CPU post-process ms | GPU kernel ms | GPU compute ms (wall) | `decode` total, CPU / GPU ms |
+|---|---|---|---|---|---|
+| Canon EOS Rebel T2i, 17.9 MP Bayer | bilinear | 27.6 | 4.3 | 5.0 | 57.5 / 43.0 |
+| | edge-aware | 252.8 | 26.8 (2 bands) | 34.3 | 292.2 / 71.0 |
+| Fujifilm X-T50, 39.8 MP X-Trans | bilinear | 81.0 | 8.4 | 11.9 | 167.2 / 107.0 |
+| | edge-aware | 356.6 | 52.5 (3 bands) | 55.1 | 441.6 / 139.8 |
+
+The GPU edge-aware kernels cost about 6x the bilinear kernel (CPU: 4.4x on X-Trans, 9.2x on Bayer on this machine),
+so the GPU (wall-clock compute) is 7.4x (Bayer) and 6.5x (X-Trans) faster than the 20-thread CPU post-process and
+4.1x / 3.2x faster on the whole decode. Per pass on the Bayer frame (kernel time, from runs with passes left out):
+mosaic 1.3 ms, `G0` 8 ms, weights and filters 12 to 18 ms, chroma passes 5 to 9 ms, final encode 4 ms. `Backend::Auto` estimates the edge-aware develop as
+`EDGE_CPU_FACTOR` (5) times the bilinear one on the CPU and `EDGE_GPU_FACTOR` (6) times on the GPU
+(`policy::decide`). Not measured: discrete GPUs, Vulkan, DX12 and the browser (WebGPU).
 
 ## Data path
 
