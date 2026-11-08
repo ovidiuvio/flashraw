@@ -469,6 +469,10 @@ impl<'a> FlashRaw<'a> {
                         params.dm_wb = wb;
                     }
                 }
+                if opts.highlights == Highlights::Reconstruct {
+                    params.recon =
+                        process::fit_reconstruction(&img, &frame_info_for_post, origin, params.wb).unwrap_or_default();
+                }
                 let staged =
                     opts.apply_opcodes && lists.as_ref().is_some_and(|l| l.has_pixel_ops(1) || l.has_pixel_ops(2));
                 // Staggered lattices (SuperCCD) develop to linear RGB in the stored grid, then

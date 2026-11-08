@@ -339,6 +339,8 @@ pub struct DevelopParams {
     pub levels: Option<Levels>,
     /// Clipped highlights (see [`Highlights`]).
     pub highlights: Highlights,
+    /// The model of [`Highlights::Reconstruct`] (predicts nothing by default).
+    pub recon: ReconModel,
     /// Transfer curve of the display encoders (sRGB unless an output colour space or
     /// profile is set; the matching primaries are already folded into the matrices).
     pub curve: OutputCurve,
@@ -369,6 +371,7 @@ impl DevelopParams {
             orientation: info.orientation,
             levels: None,
             highlights: Highlights::Clip,
+            recon: ReconModel::default(),
             curve: OutputCurve::Srgb,
         }
     }
@@ -413,25 +416,52 @@ impl DevelopParams {
     }
 }
 
-/// Normalised level (per channel, before white balance) where [`Highlights::Neutral`] and [`Highlights::Blend`] start
-/// fading a pixel to white; it is fully white at 1, the sensor's saturation.
-const NEUTRAL_START: f32 = 0.95;
+/// Normalised level (per channel, before white balance) from which a sample counts as clipped
+/// for [`Highlights::Reconstruct`].
+const CLIP_LEVEL: f32 = 0.98;
 
-/// Automatic white balance of a colour filter array frame: starting from `start` (the
-/// camera's multipliers), refine them over the near-neutral areas. The frame is cut into 6x6
-/// blocks (a multiple of the Bayer and X-Trans periods) and each block's mean per colour is
-/// balanced with the current multipliers; the blocks that are mid-tone (green between 5 % and
-/// 80 % of the white level), unclipped and near neutral (red and blue within 30 % of green)
-/// then pull the multipliers so that their means are equal, three times over. Coloured areas
-/// that dominate the scene do not take part, and the result stays within a factor of two of
-/// `start`. `None` when the frame is not a three-colour mosaic that still needs balancing, or
-/// fewer than 200 blocks are near neutral.
-pub(crate) fn auto_white_balance(
-    img: &RawImage,
-    info: &FrameInfo,
-    origin: (u32, u32),
-    start: [f32; 4],
-) -> Option<[f32; 4]> {
+/// What [`Highlights::Reconstruct`] knows about a frame: predictions of a clipped channel from
+/// the others in white-balanced linear camera RGB, fitted on the frame's unclipped blocks
+/// ([`fit_reconstruction`]). The default predicts nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct ReconModel {
+    /// `alone[k]`: channel `k` clipped alone is `a * first other + b * second other`.
+    alone: [Option<[f32; 2]>; 3],
+    /// `ratio[k][j]`: channel `k` clipped with one more is `ratio * channel j` (j unclipped).
+    ratio: [[Option<f32>; 3]; 3],
+}
+
+impl ReconModel {
+    /// The balanced pixel `u` with its clipped channels (`clipped[k]`) replaced by their
+    /// predictions when those are larger.
+    #[inline]
+    fn apply(&self, u: &mut [f32; 3], clipped: [bool; 3]) {
+        match clipped.iter().filter(|&&c| c).count() {
+            1 => {
+                let k = clipped.iter().position(|&c| c).unwrap();
+                if let Some([a, b]) = self.alone[k] {
+                    let (i, j) = ((k + 1) % 3, (k + 2) % 3);
+                    u[k] = u[k].max(a * u[i] + b * u[j]);
+                }
+            }
+            2 => {
+                let j = clipped.iter().position(|&c| !c).unwrap();
+                for k in 0..3 {
+                    if clipped[k] {
+                        if let Some(r) = self.ratio[k][j] {
+                            u[k] = u[k].max(r * u[j]);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Means per colour of the 6x6 blocks of a colour filter array frame (a multiple of the Bayer
+/// and X-Trans periods), without the blocks that hold a sample at or above `clip`.
+fn block_means(img: &RawImage, info: &FrameInfo, origin: (u32, u32), clip: f32) -> Option<Vec<[f32; 3]>> {
     let cfa = info.cfa?;
     if img.cpp != 1
         || info.white_balance_applied
@@ -459,7 +489,7 @@ pub(crate) fn auto_white_balance(
                     if c < 3 {
                         sum[c] += v;
                         n[c] += 1.0;
-                        clipped |= v > 0.95;
+                        clipped |= v >= clip;
                     }
                 }
             }
@@ -468,6 +498,88 @@ pub(crate) fn auto_white_balance(
             }
         }
     }
+    Some(blocks)
+}
+
+/// Fit the [`ReconModel`] of a frame balanced with `wb`: least squares (no intercept) over the
+/// unclipped 6x6 blocks whose predicted channel is in the upper part of its range (above 40 %
+/// of its clipping level, where the prediction is needed), at least 300 blocks per model.
+pub(crate) fn fit_reconstruction(
+    img: &RawImage,
+    info: &FrameInfo,
+    origin: (u32, u32),
+    wb: [f32; 4],
+) -> Option<ReconModel> {
+    let blocks = block_means(img, info, origin, CLIP_LEVEL)?;
+    let bal: Vec<[f32; 3]> = blocks.iter().map(|b| [b[0] * wb[0], b[1] * wb[1], b[2] * wb[2]]).collect();
+    let mut model = ReconModel::default();
+    for k in 0..3 {
+        let (i, j) = ((k + 1) % 3, (k + 2) % 3);
+        let lo = 0.4 * wb[k] * CLIP_LEVEL;
+        // Two unknowns: normal equations of b_k = a b_i + b b_j.
+        let (mut sii, mut sij, mut sjj, mut sik, mut sjk, mut n) = (0f64, 0f64, 0f64, 0f64, 0f64, 0u32);
+        let (mut rj_num, mut rj_den) = ([0f64; 3], [0f64; 3]);
+        for b in &bal {
+            if b[k] < lo {
+                continue;
+            }
+            let (x, y, z) = (b[i] as f64, b[j] as f64, b[k] as f64);
+            sii += x * x;
+            sij += x * y;
+            sjj += y * y;
+            sik += x * z;
+            sjk += y * z;
+            n += 1;
+            for (c, o) in [(i, x), (j, y)] {
+                rj_num[c] += z * o;
+                rj_den[c] += o * o;
+            }
+        }
+        if n >= 300 {
+            // A small ridge keeps nearly collinear channels (neutral scenes) well conditioned.
+            let ridge = 1e-4 * (sii + sjj);
+            let (sii, sjj) = (sii + ridge, sjj + ridge);
+            let det = sii * sjj - sij * sij;
+            if det > 0.0 {
+                let a = (sik * sjj - sjk * sij) / det;
+                let b = (sjk * sii - sik * sij) / det;
+                if a.is_finite() && b.is_finite() && a >= 0.0 && b >= 0.0 {
+                    model.alone[k] = Some([a as f32, b as f32]);
+                }
+            }
+            for c in [i, j] {
+                if rj_den[c] > 0.0 {
+                    let r = (rj_num[c] / rj_den[c]) as f32;
+                    if r.is_finite() && r > 0.0 {
+                        model.ratio[k][c] = Some(r);
+                    }
+                }
+            }
+        }
+    }
+    Some(model)
+}
+
+/// Normalised level (per channel, before white balance) where [`Highlights::Neutral`] and [`Highlights::Blend`] start
+/// fading a pixel to white; it is fully white at 1, the sensor's saturation.
+const NEUTRAL_START: f32 = 0.95;
+
+/// Automatic white balance of a colour filter array frame: starting from `start` (the
+/// camera's multipliers), refine them over the near-neutral areas. The frame is cut into 6x6
+/// blocks (a multiple of the Bayer and X-Trans periods) and each block's mean per colour is
+/// balanced with the current multipliers; the blocks that are mid-tone (green between 5 % and
+/// 80 % of the white level), unclipped and near neutral (red and blue within 30 % of green)
+/// then pull the multipliers so that their means are equal, three times over. Coloured areas
+/// that dominate the scene do not take part, and the result stays within a factor of two of
+/// `start`. `None` when the frame is not a three-colour mosaic that still needs balancing, or
+/// fewer than 200 blocks are near neutral.
+pub(crate) fn auto_white_balance(
+    img: &RawImage,
+    info: &FrameInfo,
+    origin: (u32, u32),
+    start: [f32; 4],
+) -> Option<[f32; 4]> {
+    let blocks = block_means(img, info, origin, 0.95)?;
     let mut wb = [start[0].max(1e-3), 1.0, start[2].max(1e-3)];
     for _ in 0..3 {
         let (mut acc, mut n) = ([0f64; 3], 0u32);
@@ -499,12 +611,17 @@ pub(crate) fn finish_rgb(
     m: &[[f32; 3]; 3],
     levels: Option<Levels>,
     highlights: Highlights,
+    recon: &ReconModel,
 ) -> [f32; 3] {
     let (mut r, mut g, mut b);
-    if highlights == Highlights::Blend {
+    if highlights == Highlights::Blend || highlights == Highlights::Reconstruct {
         // Scale the balanced pixel down together when a channel exceeds the white level, so the
-        // ratios between the channels (the colour) survive; below it nothing changes.
-        let u = [(rgb[0] * wb[0]).max(0.0), (rgb[1] * wb[1]).max(0.0), (rgb[2] * wb[2]).max(0.0)];
+        // ratios between the channels (the colour) survive; below it nothing changes. Clipped
+        // channels are first replaced by the model's prediction (`Reconstruct`).
+        let mut u = [(rgb[0] * wb[0]).max(0.0), (rgb[1] * wb[1]).max(0.0), (rgb[2] * wb[2]).max(0.0)];
+        if highlights == Highlights::Reconstruct {
+            recon.apply(&mut u, rgb.map(|v| v >= CLIP_LEVEL));
+        }
         let k = 1.0 / u[0].max(u[1]).max(u[2]).max(1.0);
         (r, g, b) = (u[0] * k, u[1] * k, u[2] * k);
     } else {
@@ -515,7 +632,12 @@ pub(crate) fn finish_rgb(
     if highlights != Highlights::Clip {
         // The brightest channel (as measured, before white balance) tells how close the pixel
         // is to clipping: fade the others up to the brightest balanced one.
-        let s = rgb[0].max(rgb[1]).max(rgb[2]);
+        // `Reconstruct` fades only pixels that are near saturation in every channel.
+        let s = if highlights == Highlights::Reconstruct {
+            rgb[0].min(rgb[1]).min(rgb[2])
+        } else {
+            rgb[0].max(rgb[1]).max(rgb[2])
+        };
         if s > NEUTRAL_START {
             let x = ((s - NEUTRAL_START) / (1.0 - NEUTRAL_START)).min(1.0);
             let t = x * x * (3.0 - 2.0 * x);
@@ -604,6 +726,7 @@ pub(crate) struct Kernel<'a> {
     m: [[f32; 3]; 3],
     levels: Option<Levels>,
     highlights: Highlights,
+    recon: ReconModel,
     crop: Rect,
     half: bool,
     /// Edge-aware demosaic of Bayer / X-Trans frames (`Demosaic::EdgeAware`).
@@ -716,7 +839,7 @@ impl Kernel<'_> {
 
     #[inline(always)]
     fn finish(&self, rgb: [f32; 3]) -> [f32; 3] {
-        finish_rgb(rgb, &self.wb, &self.m, self.levels, self.highlights)
+        finish_rgb(rgb, &self.wb, &self.m, self.levels, self.highlights, &self.recon)
     }
 
     /// Develop output row `oy` (crop/half coordinates) into `out` (one RGB per output pixel).
@@ -917,6 +1040,7 @@ impl Kernel<'_> {
                         &self.m,
                         self.levels,
                         self.highlights,
+                        &self.recon,
                     );
                 }
             }
@@ -998,6 +1122,7 @@ fn kernel_with<'a>(
         m: params.cam_to_rgb,
         levels: params.levels,
         highlights: params.highlights,
+        recon: params.recon,
         crop,
         half: params.demosaic == Demosaic::HalfSize,
         edge: match (params.demosaic, info.cfa) {
@@ -1236,7 +1361,7 @@ pub(crate) fn develop_staged(
             f(first, band);
         }
         for p in band.iter_mut() {
-            *p = finish_rgb(*p, &params.wb, &params.cam_to_rgb, params.levels, params.highlights);
+            *p = finish_rgb(*p, &params.wb, &params.cam_to_rgb, params.levels, params.highlights, &params.recon);
         }
     };
     let (k, band): (Kernel, Option<&BandHook<'_>>) = match camera {
@@ -1564,7 +1689,7 @@ mod tests {
     fn blend_highlights_keep_the_colour_above_white_and_change_nothing_below() {
         let wb = [2.0, 1.0, 1.5, 1.0];
         let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h);
+        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h, &ReconModel::default());
         // Red above white after balance (0.8 * 2 = 1.6), green and blue low: Clip loses the ratio,
         // Blend keeps it and reaches exactly white level in the brightest channel.
         let red = [0.8, 0.2, 0.1];
@@ -1581,10 +1706,50 @@ mod tests {
     }
 
     #[test]
+    fn reconstruct_predicts_clipped_channels_from_a_fitted_model() {
+        // A frame whose unclipped blocks follow R = t, B = 0.8 t, G = 1.3 t (wb 1): the model
+        // recovers a green clipped at the sensor level from red and blue.
+        let (w, h) = (192u32, 192u32);
+        let mut img = RawImage::new_u16(w, h, 1, &Limits::default()).unwrap();
+        for y in 0..h as usize {
+            for x in 0..w as usize {
+                // Per 6x6 block a level t in (0.2, 0.75): green stays below the clipping level.
+                let t = 0.2 + 0.55 * (((x / 6) * 7 + (y / 6) * 3) % 32) as f32 / 31.0;
+                let v = match (y % 2, x % 2) {
+                    (0, 0) => t,
+                    (1, 1) => 0.8 * t,
+                    _ => 1.3 * t,
+                };
+                img.u16_mut()[y * w as usize + x] = (v * 4000.0) as u16;
+            }
+        }
+        let mut info = FrameInfo::new(w, h, 12);
+        info.cfa = Some(CfaPattern::RGGB);
+        info.black_level = BlackLevel::uniform(0.0);
+        info.white_level = WhiteLevel::uniform(4000);
+        let model = fit_reconstruction(&img, &info, (0, 0), [1.0; 4]).unwrap();
+        let [a, b] = model.alone[1].unwrap();
+        assert!((a + b * 0.8 - 1.3).abs() < 0.05, "{a} {b}");
+        let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &[1.0; 4], &id, None, h, &model);
+        // Green clipped where t = 0.85 (red 0.85, blue 0.68; green really 1.105): the colour comes back.
+        let px = [0.85, 1.0, 0.68];
+        let rec = f(px, Highlights::Reconstruct);
+        assert!((rec[1] / rec[0] - 1.3).abs() < 0.05 && rec[1] == 1.0, "{rec:?}");
+        assert!(f(px, Highlights::Blend)[1] / f(px, Highlights::Blend)[0] < 1.25);
+        // Without a model the same pixel keeps its measured, clipped ratio.
+        assert_eq!(finish_rgb(px, &[1.0; 4], &id, None, Highlights::Reconstruct, &ReconModel::default())[1], 1.0);
+        // Pixels without a clipped channel are untouched, and all-clipped pixels are white.
+        let ok = [0.4, 0.5, 0.3];
+        assert_eq!(f(ok, Highlights::Reconstruct), f(ok, Highlights::Clip));
+        assert_eq!(f([1.0, 1.0, 1.0], Highlights::Reconstruct), [1.0, 1.0, 1.0]);
+    }
+
+    #[test]
     fn neutral_highlights_remove_the_cast_of_partly_clipped_pixels() {
         let wb = [2.0, 1.0, 1.5, 1.0];
         let id = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
-        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h);
+        let f = |px: [f32; 3], h: Highlights| finish_rgb(px, &wb, &id, None, h, &ReconModel::default());
         // Green at saturation, red and blue below it: clip keeps a green cast, neutral is white.
         let partly = [0.45, 1.0, 0.6];
         assert!(f(partly, Highlights::Clip)[0] < 0.95);

@@ -187,6 +187,7 @@ enum class highlights : std::int32_t {
     clip = FLASHRAW_HIGHLIGHTS_CLIP,
     neutral = FLASHRAW_HIGHLIGHTS_NEUTRAL,
     blend = FLASHRAW_HIGHLIGHTS_BLEND,
+    reconstruct = FLASHRAW_HIGHLIGHTS_RECONSTRUCT,
 };
 
 enum class corruption_policy : std::int32_t {

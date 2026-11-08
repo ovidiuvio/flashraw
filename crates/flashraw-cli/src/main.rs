@@ -40,7 +40,7 @@ struct DecodeArgs {
     /// Demosaic for RGB outputs: bilinear, half, edge-aware.
     #[arg(long, default_value = "bilinear")]
     demosaic: String,
-    /// Clipped highlights of RGB outputs: clip, neutral, blend.
+    /// Clipped highlights of RGB outputs: clip, neutral, blend, reconstruct.
     #[arg(long, default_value = "clip")]
     highlights: String,
     /// White balance of RGB outputs: as-shot, auto (refine the camera's over near-neutral areas).

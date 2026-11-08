@@ -86,6 +86,9 @@ pub enum flashraw_highlights {
     /// Scale pixels that exceed the white level after white balance down together (keeps their
     /// colour); pixels at or near sensor saturation fade to white. CPU only.
     FLASHRAW_HIGHLIGHTS_BLEND = 2,
+    /// Rebuild clipped channels from the unclipped ones with a model fitted on the frame. CPU
+    /// only.
+    FLASHRAW_HIGHLIGHTS_RECONSTRUCT = 3,
 }
 
 /// Behaviour on truncated or corrupt sensor data (`flashraw_decode_options.corruption_policy`).
@@ -646,6 +649,7 @@ pub(crate) fn highlights_from(v: i32) -> FfiResult<flashraw::Highlights> {
         0 => flashraw::Highlights::Clip,
         1 => flashraw::Highlights::Neutral,
         2 => flashraw::Highlights::Blend,
+        3 => flashraw::Highlights::Reconstruct,
         _ => return Err(FfiError::invalid(format!("unknown highlights {v}"))),
     })
 }

@@ -327,7 +327,7 @@ impl RawFile {
             invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size or edge-aware)"))
         })?;
         let hl = Highlights::parse(highlights).ok_or_else(|| {
-            invalid(py, format!("unknown highlights {highlights:?} (expected clip, neutral or blend)"))
+            invalid(py, format!("unknown highlights {highlights:?} (expected clip, neutral, blend or reconstruct)"))
         })?;
         let wbm = WhiteBalanceMode::parse(white_balance).ok_or_else(|| {
             invalid(py, format!("unknown white_balance {white_balance:?} (expected as-shot or auto)"))

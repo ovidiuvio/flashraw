@@ -260,7 +260,7 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
     }
     if let Some(h) = str_opt(&v, "highlights")? {
         o.highlights = flashraw::Highlights::parse(h).ok_or_else(|| {
-            ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip, neutral or blend)"))
+            ApiError::invalid(format!("unknown `highlights` {h:?} (expected clip, neutral, blend or reconstruct)"))
         })?;
     }
     if let Some(m) = str_opt(&v, "whiteBalance")? {

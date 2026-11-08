@@ -277,6 +277,11 @@ enum flashraw_highlights
      * colour); pixels at or near sensor saturation fade to white. CPU only.
      */
     FLASHRAW_HIGHLIGHTS_BLEND = 2,
+    /**
+     * Rebuild clipped channels from the unclipped ones with a model fitted on the frame. CPU
+     * only.
+     */
+    FLASHRAW_HIGHLIGHTS_RECONSTRUCT = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

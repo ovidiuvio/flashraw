@@ -19,6 +19,7 @@ def test_edge_aware_and_highlights_options(mlv_path: pathlib.Path) -> None:
         neutral = raw.decode("rgba8", highlights="neutral")
         assert neutral.array.shape == base.array.shape
         assert raw.decode("rgba8", highlights="blend").array.shape == base.array.shape
+        assert raw.decode("rgba8", highlights="reconstruct").array.shape == base.array.shape
         assert raw.decode("rgba8", white_balance="auto").array.shape == base.array.shape
         assert np.array_equal(raw.decode("rgba8", white_balance="as-shot").array, base.array)
         with pytest.raises(flashraw.InvalidArgumentError):

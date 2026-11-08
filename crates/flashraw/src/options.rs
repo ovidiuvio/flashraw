@@ -201,6 +201,15 @@ pub enum Highlights {
     /// `Neutral`. Nothing changes below the white level. CPU only (the GPU backend decodes on
     /// the CPU for it).
     Blend,
+    /// Rebuilds clipped channels from the unclipped ones: a model fitted on the unclipped
+    /// blocks of the frame predicts a clipped channel (alone, or with one more clipped) from the
+    /// others, the pixel keeps its colour above white as in `Blend`, and only pixels clipped in
+    /// every channel fade to white. The model is global to the frame, so it works for highlights
+    /// whose colour resembles the rest of the scene (skies, white or grey objects, skin) and
+    /// not for a saturated coloured light source; frames it cannot fit (too few unclipped
+    /// blocks, four-colour sensors, files without a colour filter array) behave as `Blend`.
+    /// CPU only (the GPU backend decodes on the CPU for it).
+    Reconstruct,
 }
 
 /// Where the white balance of RGB outputs comes from.
@@ -390,12 +399,13 @@ impl Demosaic {
 }
 
 impl Highlights {
-    /// Parse a highlight mode name (`clip`, `neutral`, `blend`; case-insensitive).
+    /// Parse a highlight mode name (`clip`, `neutral`, `blend`, `reconstruct`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().as_str() {
             "clip" => Highlights::Clip,
             "neutral" => Highlights::Neutral,
             "blend" => Highlights::Blend,
+            "reconstruct" => Highlights::Reconstruct,
             _ => return None,
         })
     }
@@ -406,6 +416,7 @@ impl Highlights {
             Highlights::Clip => "clip",
             Highlights::Neutral => "neutral",
             Highlights::Blend => "blend",
+            Highlights::Reconstruct => "reconstruct",
         }
     }
 }
@@ -508,7 +519,7 @@ mod tests {
         ] {
             assert_eq!(o.to_string().parse::<OutputFormat>(), Ok(o));
         }
-        for h in [Highlights::Clip, Highlights::Neutral, Highlights::Blend] {
+        for h in [Highlights::Clip, Highlights::Neutral, Highlights::Blend, Highlights::Reconstruct] {
             assert_eq!(h.to_string().parse::<Highlights>(), Ok(h));
         }
         for m in [WhiteBalanceMode::AsShot, WhiteBalanceMode::Auto] {

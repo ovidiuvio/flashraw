@@ -340,6 +340,7 @@ impl Lists {
                         &lparams.cam_to_rgb,
                         lparams.levels,
                         lparams.highlights,
+                        &lparams.recon,
                     );
                     o.copy_from_slice(&v);
                 }
@@ -455,6 +456,7 @@ mod tests {
                     &params.cam_to_rgb,
                     params.levels,
                     params.highlights,
+                    &params.recon,
                 ));
             }
         }

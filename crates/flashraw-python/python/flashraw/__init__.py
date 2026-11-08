@@ -562,7 +562,8 @@ class RawFile:
             black_point_compensation: black point compensation for ``output_profile``.
             highlights: ``"clip"`` (default), ``"neutral"`` (fade pixels at or near sensor
                 saturation to white instead of leaving a colour cast) or ``"blend"`` (the same,
-                and pixels above white after white balance keep their colour) (CPU only).
+                and pixels above white after white balance keep their colour) or ``"reconstruct"``
+                (also rebuild clipped channels from a model fitted on the frame) (CPU only).
             white_balance: ``"as-shot"`` (default, the camera's balance) or ``"auto"`` (refine the camera's
                 balance over the near-neutral areas; CPU only).
         """

@@ -529,9 +529,9 @@ export interface DecodeOptions {
    * Clipped highlights of RGB outputs. `clip` (default) clamps each channel, leaving a colour
    * cast on partly clipped pixels; `neutral` fades pixels at or near sensor saturation to white;
    * `blend` also scales pixels that exceed the white level after white balance down together,
-   * which keeps their colour (CPU only: the WebGPU build falls back to the CPU for them).
+   * which keeps their colour; `reconstruct` also rebuilds clipped channels from a model fitted on the frame (CPU only: the WebGPU build falls back to the CPU for them).
    */
-  highlights?: 'clip' | 'neutral' | 'blend';
+  highlights?: 'clip' | 'neutral' | 'blend' | 'reconstruct';
   /**
    * White balance of RGB outputs. `as-shot` (default) uses the camera's balance; `auto` refines
    * the camera's balance over the near-neutral areas of the frame (CPU only: the WebGPU build falls back to
