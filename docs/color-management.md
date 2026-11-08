@@ -124,9 +124,63 @@ BSD-3-Clause OR Apache-2.0, no C dependencies; it is only built with the `icc` f
 below the 16-bit output precision; the second pass agrees with the folded pass to a few codes
 of 16 bits.
 
-Input (camera) profiles are not supported: FlashRaw develops with the colour matrices of the
-file or its camera database, and DNG camera profiles (HueSatMap, LookTable) are reported in the
-metadata but not applied.
+ICC input profiles are not supported: FlashRaw develops with the colour matrices of the file or
+its camera database. DNG camera profiles are opt-in, see the next section.
+
+## DNG camera profiles (opt-in)
+
+A DNG camera profile carries the colour matrices of a camera and, usually, a hue/saturation/value
+table (`ProfileHueSatMap`), a second one for the look (`ProfileLookTable`) and a tone curve
+(`ProfileToneCurve`), which is what the rendering of "Adobe Standard" and the camera-matching
+profiles consists of. Without the option nothing changes: the output is bit-identical to a decode
+that predates it. With the option the RGB outputs (`rgba8`, `rgb16` and the linear ones; raw
+outputs are never touched) of three-colour sensors are rendered with the profile:
+
+1. Camera to XYZ (D50). When the profile has `ForwardMatrix1/2` they map the white balanced
+   camera RGB to XYZ D50, interpolated between the two calibration illuminants in reciprocal
+   colour temperature (the temperature of the camera neutral is found by iterating the
+   interpolated `ColorMatrix`, starting at 5000 K; McCamy's formula converts chromaticity to
+   temperature). Without forward matrices the `ColorMatrix` is inverted at that temperature and the
+   white adapted to D50 with the Bradford transform. The profile's matrices are used when it has
+   them, else the file's.
+2. XYZ to linear ProPhoto RGB, the working space of the tables, scaled by `BaselineExposureOffset`.
+3. `ProfileHueSatMap` (the two tables blended by the same temperature weight), then
+   `ProfileLookTable`: RGB to HSV (on sRGB-encoded values when the table's encoding tag says so),
+   trilinear interpolation in (hue, saturation, value) with the hue wrapping around, hue shift in
+   degrees, saturation and value scales, HSV to RGB. The table layout is the value division
+   slowest, then hue, then saturation.
+4. `ProfileToneCurve` on each channel (monotone cubic through the points).
+5. ProPhoto to the output colour space (`color_space` / `output_profile`); `exposure` and the
+   black and white points are applied after the profile, in linear light.
+
+Not applied: `DefaultBlackRender`, the file's `BaselineExposure`, a third calibration of a DNG that
+has three, four-colour sensors (an `InvalidArgument` error). The profile runs on the CPU after the
+demosaic (one extra pass over the frame); the GPU backend decodes on the CPU for it.
+
+Where the profile comes from: a `.dcp` file (`CameraProfile::from_dcp`; `CameraProfile::to_dcp`
+writes one) or the DNG itself (`FlashRaw::embedded_camera_profile`, `None` for files without
+forward matrices, tables or a tone curve). Some DNGs embed one (the Google Pixel and
+Adobe-converted DNGs of the test set do, with a 90x30x1 hue/sat map and a 36x8x16 look table);
+files that carry only the usual colour matrices have none. A `.dcp` is made for one camera model
+(`unique_camera_model`); FlashRaw does not check that it matches the file.
+
+What this has been checked against: synthetic profiles with hand-computed results (identity
+tables, hue shift, saturation and value scale, hue wrap-around, trilinear lookup, tone curve,
+illuminant interpolation, the `.dcp` parser) and the profiles embedded in DNGs of the test set
+(finite output, brightness within a few percent of the default develop, a plausible change of
+saturation). It has not been compared with the output of another implementation, so do not
+expect pixel agreement with Adobe's rendering: the interpolation details that the specification
+leaves open (the colour temperature estimate, the curve interpolation, the order of the exposure
+offset) are choices made here.
+
+| Where | Option |
+|---|---|
+| Rust | `DecodeOptions::camera_profile: Option<CameraProfile>`; `CameraProfile::from_dcp(bytes)`, `FlashRaw::embedded_camera_profile()` |
+| CLI | `--camera-profile FILE.dcp` or `--camera-profile embedded` |
+| C | `flashraw_decode_options.camera_profile` + `camera_profile_len` (the bytes of a `.dcp`), or `camera_profile_embedded = 1` |
+| C++ | `decode_options::camera_profile`, `camera_profile_len`, `camera_profile_embedded` |
+| Python | `decode(camera_profile=bytes_or_path)` or `camera_profile="embedded"` |
+| JavaScript | `decode({ cameraProfile: Uint8Array })` or `{ cameraProfile: 'embedded' }` |
 
 ### WebAssembly
 

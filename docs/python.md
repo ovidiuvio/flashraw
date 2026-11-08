@@ -144,6 +144,7 @@ frame = raw.decode(
     output_profile=None,         # RGB outputs: ICC profile (bytes or path) to convert to instead
     intent="perceptual",         # for output_profile: "perceptual", "relative", "saturation", "absolute"
     black_point_compensation=False,
+    camera_profile=None,         # RGB outputs: a DNG camera profile (.dcp bytes or path), or "embedded" for the DNG's own; CPU only
 )
 raw.decode_region((0, 0, 512, 512))    # same as region=...
 raw.decode_tile(3)                      # one tile/strip of raw.tiles

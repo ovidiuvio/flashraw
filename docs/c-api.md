@@ -133,7 +133,10 @@ data, e.g. Nikon High Efficiency NEF, return the embedded full-size preview inst
 `FLASHRAW_ERROR_UNSUPPORTED_COMPRESSION`), `color_space` (`FLASHRAW_COLOR_SPACE_SRGB` default,
 `_DISPLAY_P3`, `_ADOBE_RGB`, `_PROPHOTO`, `_REC2020`) and `output_profile` + `output_profile_len`
 (an ICC profile to convert to instead, with `intent` and `black_point_compensation`; needs
-`flashraw_icc_supported()`, see [colour management](color-management.md)); `decode(file, &o, &frame)`.
+`flashraw_icc_supported()`, see [colour management](color-management.md)), `camera_profile` +
+`camera_profile_len` (the bytes of a DNG camera profile, a `.dcp` file, to render the RGB outputs
+with; CPU only) or `camera_profile_embedded` (non-zero: the profile stored in the DNG, an error when
+it has none); `decode(file, &o, &frame)`.
 `flashraw_frame_color_space()` and `flashraw_frame_icc_profile()` (bytes owned by the frame, for
 tagging files) describe the result; `flashraw_icc_profile()` copies the standard profile of a
 space. The display outputs

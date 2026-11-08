@@ -77,6 +77,7 @@ no adapter exists.
 | half-size 2x2 superpixel | `process::develop` (HalfSize) | same as above |
 | neutral and blend highlight modes (`Highlights::Neutral`, `Highlights::Blend`) | not implemented on the GPU | same: CPU fallback, `NotAvailable` for GPU-resident outputs |
 | edge-aware demosaic | not implemented on the GPU (CPU only, see [edge-aware-demosaic](design/edge-aware-demosaic.md)) | `Backend::Auto` and `Backend::Gpu` decode on the CPU; GPU-resident outputs return `NotAvailable` |
+| DNG camera profiles (`camera_profile`: forward matrices, hue/sat map, look table, tone curve) | not implemented on the GPU (CPU only, see [colour management](color-management.md)) | same: CPU fallback, `NotAvailable` for GPU-resident outputs |
 
 The GPU path reproduces the CPU semantics exactly:
 * **Bilinear demosaic:** a site's own colour is the centre sample. Each other colour is
@@ -255,6 +256,10 @@ Hard rules first:
 * `RawU16`/`RawF32` outputs never touch the GPU. They are transfer-bound: the GPU loses
   even for packed payloads (table below). This also means the default `decode()` never
   initialises a GPU.
+* RGB outputs with a DNG camera profile (`DecodeOptions::camera_profile`) decode on the CPU,
+  like the edge-aware demosaic, the neutral and blend highlight modes and the automatic white
+  balance: the hue/sat tables and tone curve have no GPU kernel. `Backend::Gpu` with a
+  profile falls back to the CPU too, and GPU-resident outputs fail with `NotAvailable`.
 * Frames < 2 MP stay on the CPU (fixed overheads dominate).
 * Software adapters (llvmpipe, lavapipe, SwiftShader, WARP) are never auto-selected.
 * `Gpu*` (resident) outputs always use the GPU.

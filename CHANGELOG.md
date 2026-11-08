@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- DNG camera profiles, opt-in (`DecodeOptions::camera_profile`, `--camera-profile FILE.dcp|embedded`,
+  `camera_profile=` in Python, `cameraProfile` in JavaScript, `camera_profile` / `camera_profile_embedded` in
+  `flashraw_decode_options`): the RGB outputs of three-colour sensors are rendered with a `.dcp` file or with the
+  profile embedded in the DNG (`FlashRaw::embedded_camera_profile`): forward matrices (or the colour matrices)
+  interpolated by the colour temperature of the neutral, then the hue/sat map, look table and tone curve, as the DNG
+  specification describes. New types `CameraProfile` (`from_dcp`, `to_dcp`), `ProfileTable`, `TableEncoding`.
+  The default develop is unchanged. CPU only (the GPU backend decodes on the CPU for it).
+  `flashraw_decode_options` grows by 24 bytes on 64-bit targets. Not compared against another implementation:
+  see `docs/color-management.md`.
 - `Demosaic::EdgeAware` (`edge-aware` in the CLI, Python, JavaScript and C): an opt-in demosaic for Bayer and
   X-Trans sensors with directionally weighted 7x7 filters and a luminance-gated colour-difference stage (3x3 median on X-Trans) and, on noisy frames, a gated smoothing. Far fewer zipper
   patterns and isolated coloured dots than bilinear (the X-Trans speckle of issue #3 goes from 4.29 to 2.25 on

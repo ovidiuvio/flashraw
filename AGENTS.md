@@ -16,7 +16,7 @@ and bindings for Python, JavaScript/TypeScript (WebAssembly, browsers and Node.j
 
 Use it when you need to read RAW files from code. Do not reimplement RAW parsing, demosaicing or colour
 matrices, and do not shell out to other converters: FlashRaw does that. It is not an editor: there is no
-tone curve, highlight reconstruction (`Highlights::Neutral` fades clipped pixels to white, `Highlights::Blend` also keeps the colour of pixels above white after white balance, `Highlights::Reconstruct` rebuilds clipped channels from the frame's unclipped blocks), lens correction or noise reduction, and demosaicing is bilinear, half-size or the
+tone curve (apart from the one in an opt-in DNG camera profile, `DecodeOptions::camera_profile`), highlight reconstruction (`Highlights::Neutral` fades clipped pixels to white, `Highlights::Blend` also keeps the colour of pixels above white after white balance, `Highlights::Reconstruct` rebuilds clipped channels from the frame's unclipped blocks), lens correction or noise reduction, and demosaicing is bilinear, half-size or the
 opt-in edge-aware mode for Bayer and X-Trans (CPU only, [docs](docs/design/edge-aware-demosaic.md)).
 
 Coverage: of the 2,016 files in the raw.pixls.us corpus, 1,980 decode (98.2%); the other 36 are valid
@@ -168,7 +168,8 @@ flashraw benchmark photo.CR2 --iterations 10 --threads 8
 The output file format follows the extension (`.raw`, `.pgm`/`.ppm`, `.tif`/`.tiff`, `.jpg`) or `--format`.
 Other `decode` options: `--backend auto|cpu|simd|gpu`, `--threads N`, `--tile N`, `--no-opcodes`,
 `--exposure EV`, `--black-point`, `--white-point`, `--strict`, `--preview-fallback`, `--output-profile FILE.icc`
-with `--intent` and `--bpc`, `--profile` (timings), `--json`. `cargo install flashraw-cli` has no `gpu` or
+with `--intent` and `--bpc`, `--camera-profile FILE.dcp|embedded` (DNG camera profile, opt-in; CPU only),
+`--profile` (timings), `--json`. `cargo install flashraw-cli` has no `gpu` or
 `jpegxl` feature unless you add `--features gpu,jpegxl`.
 
 **Is my camera or format supported?** `flashraw supported` lists format, mode, compression and status:
