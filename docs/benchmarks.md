@@ -832,6 +832,81 @@ Bundle size with all decoders (wasm-opt -O3), from [wasm.md](wasm.md#sizes), whi
 | `flashraw_simd.wasm` | 2897 KiB | 1006 KiB | 756 KiB |
 | `flashraw.wasm` (fallback) | 2847 KiB | 986 KiB | 738 KiB |
 
+## Demosaic quality
+
+`Demosaic::EdgeAware` against the demosaics of LibRaw (through rawpy), OpenCV and colour-demosaicing, with the scripts of
+[`tools/bench/demosaic`](../tools/bench/demosaic/README.md) (data in
+[`benches/results/demosaic`](../benches/results/demosaic)). FlashRaw's tables are the held-out set (trained without the
+evaluation tiles), so the ground-truth numbers are not flattering. Three views:
+
+**Against a known answer.** 11 photographic and 12 synthetic 384x384 ground-truth tiles are re-mosaicked (Bayer and
+X-Trans), written as DNG, developed by every method and compared with the original: sRGB-encoded PSNR over all
+pixels / over the 15 % highest-gradient pixels, in dB, mean over the 11 photographic tiles (`truth.json` also has the synthetic tiles
+and the colour error). Noise is added to the mosaic before development (variance `a * value + b`).
+
+| Bayer, photographic tiles | clean | moderate noise | high noise |
+|---|---:|---:|---:|
+| FlashRaw bilinear | 42.43 / 39.24 | 37.03 / 35.55 | 33.30 / 32.41 |
+| **FlashRaw edge-aware** | 42.03 / 39.42 | 35.90 / 34.82 | 32.00 / 31.39 |
+| LibRaw AHD | 41.53 / 38.91 | 34.95 / 33.99 | 30.93 / 30.42 |
+| LibRaw PPG | 41.54 / 38.99 | 35.04 / 34.06 | 31.04 / 30.50 |
+| LibRaw DCB | 41.82 / 39.30 | 35.36 / 34.40 | 31.36 / 30.86 |
+| LibRaw VNG | 41.66 / 38.91 | 35.79 / 34.67 | 31.90 / 31.30 |
+| LibRaw DHT | 41.58 / 38.91 | 35.54 / 34.35 | 31.76 / 31.03 |
+| OpenCV edge-aware | 42.39 / 39.23 | 36.85 / 35.40 | 33.10 / 32.22 |
+
+| X-Trans, photographic tiles | clean | moderate noise | high noise |
+|---|---:|---:|---:|
+| FlashRaw bilinear | 41.68 / 38.00 | 36.69 / 34.86 | 33.07 / 31.96 |
+| **FlashRaw edge-aware** | 41.89 / 39.14 | 35.79 / 34.66 | 31.82 / 31.21 |
+| LibRaw Markesteijn 1-pass | 41.75 / 39.26 | 35.27 / 34.31 | 31.32 / 30.77 |
+| LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
+| LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
+
+On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all: every other method trades some of it
+for edge detail. On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer after LibRaw DCB (a tie within 0.1 dB) and is
+0.12 dB behind LibRaw Markesteijn 1-pass on X-Trans.
+
+**On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
+index (mean Laplacian of R-G and B-G over the Laplacian of luma; lower = fewer false-colour dots and zipper patterns) and
+the *fine detail* (luma Laplacian). 13 Bayer files (Canon, Nikon, Sony, Panasonic, Fujifilm GFX, Olympus, Pentax, Leica,
+including CR3 files LibRaw crops differently, left out of the LibRaw columns) and 10 X-Trans files. The luma Laplacian of
+a noisy file is mostly noise, so a higher detail value is not always better detail.
+
+| Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
+|---|---:|---:|
+| FlashRaw bilinear | 5.18 | 4.34 |
+| **FlashRaw edge-aware** | 2.10 | 2.24 |
+| LibRaw linear (bilinear) | 5.14 | 4.26 |
+| LibRaw PPG | 1.95 | |
+| LibRaw DCB | 2.10 | |
+| LibRaw VNG | 1.68 | 1.96 |
+| LibRaw AHD | 1.57 | |
+| LibRaw DHT | 1.52 | |
+| LibRaw AAHD | 1.49 | |
+| LibRaw Markesteijn 1-pass / 3-pass | | 2.02 / 2.01 |
+
+FlashRaw edge-aware is far cleaner than any bilinear, matches LibRaw DCB on Bayer, and is 0.2 behind Markesteijn on X-Trans. The
+LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1).
+
+**Speed.** The post-process stage (demosaic, white balance, colour matrix, 8-bit encoding) of an 18 MP Bayer file (Canon EOS Rebel T2i) and a
+40 MP X-Trans file (Fujifilm X-T50) on the Linux x86-64 machine of this page (16 cores), LibRaw through rawpy
+(`postprocess` after `unpack`; `OMP_NUM_THREADS` as the thread count), in ms:
+
+| | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Bayer, 1 thread | 171 | 1259 | 206 | 259 | 595 | 1096 | 1043 | 1659 | 2315 |
+| Bayer, 16 threads | 27 | 239 | 185 | 118 | 189 | 1075 | 1024 | 293 | 2290 |
+
+| | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
+|---|---:|---:|---:|---:|---:|---:|
+| X-Trans, 1 thread | 508 | 2470 | 486 | 2252 | 5510 | 10941 |
+| X-Trans, 16 threads | 80 | 510 | 409 | 2179 | 1073 | 1905 |
+
+Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
+LibRaw AHD and PPG (2x and 5x slower); with 16 threads it is 1.3x slower than AHD and 2x slower than PPG. On X-Trans it is 2.2x to 4.4x
+faster than Markesteijn at one thread and 2.1x to 3.7x at 16.
+
 ## Performance regression detection
 
 `tools/bench/run.py ... --baseline <old.jsonl> --tolerance 15` prints per-file
