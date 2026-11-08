@@ -248,7 +248,23 @@
               <label for="opt-demosaic">Demosaic</label>
               <select id="opt-demosaic">
                 <option value="bilinear">Bilinear (full size)</option>
+                <option value="edge-aware">Edge-aware (full size, cleaner, slower)</option>
                 <option value="half-size">Half-size (fast)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="opt-wb">White balance</label>
+              <select id="opt-wb">
+                <option value="as-shot">As shot (camera)</option>
+                <option value="auto">Auto (refine over neutral areas)</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <label for="opt-highlights">Clipped highlights</label>
+              <select id="opt-highlights">
+                <option value="clip">Clip</option>
+                <option value="neutral">Fade to white</option>
+                <option value="blend">Fade to white, keep colour above white</option>
               </select>
             </div>
             <div class="field-row">

@@ -98,6 +98,8 @@ const ui = {
   dlPreview: $<HTMLButtonElement>('dl-preview'),
   dlInfo: $('dl-info'),
   demosaic: $<HTMLSelectElement>('opt-demosaic'),
+  whiteBalance: $<HTMLSelectElement>('opt-wb'),
+  highlights: $<HTMLSelectElement>('opt-highlights'),
   backend: $<HTMLSelectElement>('opt-backend'),
   redecode: $<HTMLButtonElement>('redecode'),
   compare: $<HTMLButtonElement>('compare'),
@@ -633,9 +635,9 @@ async function decodeAndShow(my: number, t0 = now()) {
   ui.redecode.disabled = true;
   const build = await warmUp();
   try {
-    let demosaic = ui.demosaic.value as 'bilinear' | 'half-size';
+    let demosaic = ui.demosaic.value as 'bilinear' | 'half-size' | 'edge-aware';
     let note = '';
-    if (demosaic === 'bilinear' && Math.max(meta.width, meta.height) > renderer.maxSize) {
+    if (demosaic !== 'half-size' && Math.max(meta.width, meta.height) > renderer.maxSize) {
       demosaic = 'half-size';
       note = ` (half-size: ${meta.width} × ${meta.height} exceeds this GPU's ${renderer.maxSize} px texture limit)`;
     }
@@ -646,13 +648,16 @@ async function decodeAndShow(my: number, t0 = now()) {
     await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
     if (my !== token) return;
     const zeroCopy = renderer instanceof GlRenderer;
-    const run = (d: 'bilinear' | 'half-size') => raw!.decode({ output: 'linear-rgb-f16', demosaic: d, backend, zeroCopy });
+    const whiteBalance = ui.whiteBalance.value as 'as-shot' | 'auto';
+    const highlights = ui.highlights.value as 'clip' | 'neutral' | 'blend';
+    const run = (d: 'bilinear' | 'half-size' | 'edge-aware') =>
+      raw!.decode({ output: 'linear-rgb-f16', demosaic: d, whiteBalance, highlights, backend, zeroCopy });
     let frame: DecodedFrame<'linear-rgb-f16'>;
     const td = now();
     try {
       frame = await run(demosaic);
     } catch (e) {
-      if (e instanceof FlashRawError && (e.kind === 'OutOfMemory' || e.kind === 'LimitExceeded') && demosaic === 'bilinear') {
+      if (e instanceof FlashRawError && (e.kind === 'OutOfMemory' || e.kind === 'LimitExceeded') && demosaic !== 'half-size') {
         demosaic = 'half-size';
         note = ' (half-size: the full-size decode did not fit in memory)';
         frame = await run(demosaic);
@@ -669,7 +674,7 @@ async function decodeAndShow(my: number, t0 = now()) {
     const fi = {
       width: frame.width,
       height: frame.height,
-      demosaic: demosaic === 'half-size' ? 'half-size demosaic' : 'bilinear demosaic',
+      demosaic: `${demosaic === 'half-size' ? 'half-size' : demosaic} demosaic`,
       backend: frame.backend,
       warnings: frame.warnings.length,
       incomplete: frame.incomplete,
