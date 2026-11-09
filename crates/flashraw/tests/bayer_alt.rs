@@ -86,10 +86,8 @@ fn bayer() -> Vec<u8> {
 
 fn xtrans() -> Vec<u8> {
     let rows = ["GGRGGB", "GGBGGR", "BRGRBG", "GGBGGR", "GGRGGB", "RBGBRG"];
-    let p: Vec<u8> = rows
-        .iter()
-        .flat_map(|r| r.bytes().map(|c| [b'R', b'G', b'B'].iter().position(|&x| x == c).unwrap() as u8))
-        .collect();
+    let p: Vec<u8> =
+        rows.iter().flat_map(|r| r.bytes().map(|c| b"RGB".iter().position(|&x| x == c).unwrap() as u8)).collect();
     dng(96, 96, 6, &p)
 }
 
