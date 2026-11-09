@@ -906,27 +906,28 @@ edge-aware is far cleaner than any bilinear and matches LibRaw DCB on Bayer; on 
 VNG. `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
 fewest false-colour dots.
 
-**Speed.** The post-process stage (demosaic, white balance, colour matrix, 8-bit encoding) of an 18 MP Bayer file (Canon EOS Rebel T2i) and a
-40 MP X-Trans file (Fujifilm X-T50) on the Linux x86-64 machine of this page (16 cores), LibRaw through rawpy
-(`postprocess` after `unpack`; `OMP_NUM_THREADS` as the thread count), in ms:
+**Speed.** The post-process stage (demosaic, white balance, colour matrix, 16-bit sRGB encoding) of an 18 MP Bayer file
+(Canon EOS Rebel T2i) and a 40 MP X-Trans file (Fujifilm X-T50) on the Linux x86-64 machine of this page (Ryzen 7 9700X,
+8 cores / 16 threads), LibRaw 0.22.2 through rawpy 0.28.0 (`postprocess` after `unpack`; `OMP_NUM_THREADS` as the thread
+count), in ms, best of the runs of two idle-machine passes (data in `benches/results/demosaic/speed.json`):
 
-| | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Bayer, 1 thread | 171 | 601 | 392 | 206 | 260 | 595 | 1095 | 1047 | 1667 | 2310 |
-| Bayer, 16 threads | 27 | 230 | 82 | 187 | 137 | 192 | 1081 | 1030 | 283 | 2296 |
+| | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | FlashRaw PPG | FlashRaw RCD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Bayer, 1 thread | 149 | 603 | 309 | 184 | 208 | 206 | 257 | 595 | 1092 | 1045 | 1659 | 2308 |
+| Bayer, 16 threads | 23 | 238 | 74 | 59 | 61 | 185 | 119 | 187 | 1081 | 1026 | 277 | 2290 |
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
 |---|---:|---:|---:|---:|---:|---:|
-| X-Trans, 1 thread | 503 | 1560 | 492 | 2252 | 7209 | 11640 |
-| X-Trans, 16 threads | 80 | 528 | 420 | 2187 | 1079 | 1919 |
+| X-Trans, 1 thread | 490 | 1407 | 486 | 2255 | 5508 | 10974 |
+| X-Trans, 16 threads | 74 | 523 | 412 | 2205 | 1081 | 1916 |
 
-Measured with the current build (noise smoothing, AVX2 filters and the chroma stages included; best of 3 runs for
-FlashRaw; the LibRaw columns and the FlashRaw 16-thread bilinear column are from the earlier idle-machine run, and a
-single-thread LibRaw AHD check on the current machine gave 568 ms against 595). The 16 "threads" are 8 cores with two
-hardware threads each, so the 16-thread figures gain little over 8. Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and speed
-against LibRaw PPG (2.3x slower single-threaded, 1.7x with 16 threads); against LibRaw AHD it is level single-threaded (601 ms against 595) and 1.2x
-slower with 16 threads. FlashRaw AHD, the same method as LibRaw AHD, takes 392 ms single-threaded against 595 ms and 82 ms with 16 threads against 192 ms.
-On X-Trans edge-aware is 4.6x to 7.5x faster than Markesteijn at one thread and 2.0x to 3.6x at 16.
+The 16 "threads" are 8 cores with two hardware threads each, so the 16-thread figures gain little over 8. For the same
+method FlashRaw is faster: PPG 1.4 times on one thread (184 against 257) and 2.0 times on 16, AHD 1.9 times and 2.5
+times, bilinear 1.4 and 8 times; on X-Trans bilinear is level on one thread (490 against 486). FlashRaw RCD (more
+accurate than LibRaw DCB, above) takes a fifth of DCB's time on one thread and a seventeenth on 16. Edge-aware, the most
+accurate method, costs about as much as LibRaw AHD on one thread (603 against 595) and is 1.3 times slower than it on
+16 (238 against 187), 2.0 times slower than LibRaw PPG on 16; on X-Trans it is 3.9 times faster than Markesteijn 1-pass
+on one thread and 2.1 times on 16.
 
 **Speed on Apple Silicon.** The same post-process stage on an Apple M1 Ultra (macOS, 20 cores), LibRaw 0.22 through rawpy
 0.27 from PyPI, in ms (data in `benches/results/demosaic/speed-mac.json`). The rawpy wheel for macOS is built without

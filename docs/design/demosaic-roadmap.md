@@ -49,7 +49,8 @@ and column tiling were tried and did not explain it.
   +0.8 dB under noise, and the lowest real-file speckle index of every demosaic measured ([ahd-demosaic](ahd-demosaic.md)).
 * Edge-aware X-Trans filters trained with a 5x5 support (below).
 * Speed, all with unchanged output unless noted: `Ppg` and `Rcd` in branch-free row loops with a 4-sample halo (25 % and
-  14 % faster; the border ring changes), the black-level normalisation vectorised (it was about a fifth of the
+  14 % faster; the border ring changes) and 256-column chunks (cache-resident with many threads: 18 % and 25 % faster on
+  16 threads of the x86-64 machine), the black-level normalisation vectorised (it was about a fifth of the
   post-process time of every demosaic), the 16-bit encode loop, `clamp` replaced in the AHD green loop (it kept the
   loop scalar; 10 % faster), and the bilinear path of X-Trans and other patterns (11 % faster). Figures from an Apple
   M1, one thread.
@@ -93,8 +94,9 @@ real-world files) the two supports were also level on Bayer.
   and camera. The 2x2-binned renders are slightly soft. Not started.
 * The shared output stage: the 16-bit sRGB encode is about a third of a bilinear develop to `rgb16` (a gather and an
   interpolation per sample); `finish_rgb` works on interleaved triples and does not vectorise.
-* Edge-aware on aarch64 is about twice as slow, relative to bilinear, as on x86-64 with AVX2: the kernels are written
-  for 16-lane accumulators and NEON has 4 lanes without the AVX2 second compile.
+* Edge-aware on aarch64 is relatively slower than on x86-64 with AVX2 (6.6 times bilinear on an Apple M1, 4.0 times on
+  a Ryzen 7 9700X, one thread): the kernels are written for 16-lane accumulators and NEON has 4 lanes, with no wider
+  second compile.
 * A per-pattern halo (7 for X-Trans with 5x5 filters) would save a little more on X-Trans.
 * New X-Trans algorithms beyond edge-aware: the homogeneity choice and the second pass did not help; better training
   data is the next candidate.
