@@ -895,17 +895,17 @@ LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1).
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Bayer, 1 thread | 171 | 1259 | 206 | 259 | 595 | 1096 | 1043 | 1659 | 2315 |
-| Bayer, 16 threads | 27 | 239 | 185 | 118 | 189 | 1075 | 1024 | 293 | 2290 |
+| Bayer, 1 thread | 174 | 1079 | 205 | 257 | 596 | 1091 | 1045 | 1663 | 2308 |
+| Bayer, 16 threads | 27 | 255 | 185 | 126 | 197 | 1072 | 1025 | 279 | 2292 |
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
 |---|---:|---:|---:|---:|---:|---:|
-| X-Trans, 1 thread | 508 | 2470 | 486 | 2252 | 5510 | 10941 |
-| X-Trans, 16 threads | 80 | 510 | 409 | 2179 | 1073 | 1905 |
+| X-Trans, 1 thread | 508 | 2035 | 490 | 2257 | 5512 | 10954 |
+| X-Trans, 16 threads | 79 | 517 | 414 | 2194 | 1075 | 1917 |
 
-The timings below were taken on an idle machine before the noise smoothing of step 5 existed; it adds about 7 % CPU time on
-a noisy Bayer frame and nothing on a clean one. Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
-LibRaw AHD and PPG (2x and 5x slower); with 16 threads it is 1.3x slower than AHD and 2x slower than PPG. On X-Trans it is 2.2x to 4.4x
+Measured on an idle machine with the current build (noise smoothing, AVX2 filters and the chroma stages included; best of 3 runs for
+FlashRaw, best of 2 for LibRaw). Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
+LibRaw AHD and PPG (1.8x and 4.2x slower); with 16 threads it is 1.3x slower than AHD and 2.0x slower than PPG. On X-Trans it is 2.7x to 5.4x
 faster than Markesteijn at one thread and 2.1x to 3.7x at 16.
 
 ## Performance regression detection
