@@ -1355,8 +1355,8 @@ macro_rules! with_encoder16 {
     ($curve:expr, |$enc:ident| $body:expr) => {
         match tables16($curve) {
             _ if matches!($curve, OutputCurve::Srgb) => {
-                let lut = srgb16_lut();
-                let $enc = move |p: [f32; 3]| p.map(|v| srgb16(v, lut));
+                let lut = srgb16_pairs();
+                let $enc = move |p: [f32; 3]| p.map(|v| srgb16_paired(v, lut));
                 $body
             }
             Tables::One(t) => {
@@ -1639,6 +1639,27 @@ pub fn srgb16(v: f32, lut: &[f32]) -> u16 {
     let ab = &lut[i..i + 2];
     let (a, b) = (ab[0], ab[1]);
     (a + (b - a) * t + 0.5) as u16
+}
+
+/// [`srgb16_lut`] as `(value, step to the next value)` pairs, so [`srgb16_paired`] reads one
+/// pair per sample. The steps are the same f32 differences [`srgb16`] computes.
+fn srgb16_pairs() -> &'static [[f32; 2]] {
+    use std::sync::OnceLock;
+    static PAIRS: OnceLock<Vec<[f32; 2]>> = OnceLock::new();
+    PAIRS.get_or_init(|| {
+        let lut = srgb16_lut();
+        (0..SRGB16_SEGMENTS).map(|i| [lut[i], lut[i + 1] - lut[i]]).collect()
+    })
+}
+
+/// [`srgb16`] from [`srgb16_pairs`]: the same result, one table read.
+#[inline(always)]
+fn srgb16_paired(v: f32, pairs: &[[f32; 2]]) -> u16 {
+    let x = v.clamp(0.0, 1.0) * SRGB16_SEGMENTS as f32;
+    let i = (x as usize).min(SRGB16_SEGMENTS - 1);
+    let t = x - i as f32;
+    let [a, d] = pairs[i];
+    (a + d * t + 0.5) as u16
 }
 
 /// Linear `[0, 1]` → 16-bit sample (clipped, rounded).
@@ -2279,6 +2300,15 @@ mod tests {
             let (_, _, _, px) = develop_encoded(&img, &info, (0, 0), &lp, RgbEncoding::Linear16, true).unwrap();
             let want: Vec<u16> = got.rgb.iter().map(|&v| linear16(v)).collect();
             assert_eq!(px.as_u16().unwrap(), &want[..]);
+        }
+    }
+
+    #[test]
+    fn srgb16_paired_matches_srgb16() {
+        let (lut, pairs) = (srgb16_lut(), srgb16_pairs());
+        for k in -10..=70_000 {
+            let v = k as f32 / 65_536.0;
+            assert_eq!(srgb16_paired(v, pairs), srgb16(v, lut), "{v}");
         }
     }
 
