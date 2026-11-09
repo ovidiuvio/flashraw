@@ -901,18 +901,21 @@ ground-truth numbers agree to 0.05 dB; it is further from the truth than edge-aw
 
 | | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Bayer, 1 thread | 171 | 1144 | 504 | 206 | 260 | 595 | 1095 | 1047 | 1667 | 2310 |
-| Bayer, 16 threads | 27 | 249 | 101 | 187 | 137 | 192 | 1081 | 1030 | 283 | 2296 |
+| Bayer, 1 thread | 171 | 601 | 392 | 206 | 260 | 595 | 1095 | 1047 | 1667 | 2310 |
+| Bayer, 16 threads | 27 | 230 | 82 | 187 | 137 | 192 | 1081 | 1030 | 283 | 2296 |
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
 |---|---:|---:|---:|---:|---:|---:|
-| X-Trans, 1 thread | 506 | 2085 | 492 | 2252 | 7209 | 11640 |
-| X-Trans, 16 threads | 80 | 533 | 420 | 2187 | 1079 | 1919 |
+| X-Trans, 1 thread | 503 | 1560 | 492 | 2252 | 7209 | 11640 |
+| X-Trans, 16 threads | 80 | 528 | 420 | 2187 | 1079 | 1919 |
 
 Measured with the current build (noise smoothing, AVX2 filters and the chroma stages included; best of 3 runs for
-FlashRaw, best of 2 for LibRaw); the single-thread figures repeat a run on an idle machine to within 6 %. Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and, single-threaded, speed against
-LibRaw AHD and PPG (1.9x and 4.4x slower); with 16 threads it is 1.3x slower than AHD and 1.8x slower than PPG. FlashRaw AHD, the same method as LibRaw AHD, takes 504 ms single-threaded against 595 ms and 101 ms with 16 threads against 192 ms. On X-Trans edge-aware is 3.5x to 5.6x
-faster than Markesteijn at one thread and 2.0x to 3.6x at 16.
+FlashRaw; the LibRaw columns and the FlashRaw 16-thread bilinear column are from the earlier idle-machine run, and a
+single-thread LibRaw AHD check on the current machine gave 568 ms against 595). The 16 "threads" are 8 cores with two
+hardware threads each, so the 16-thread figures gain little over 8. Where FlashRaw edge-aware is not the best: the Bayer cleanliness of AHD/DHT/AAHD (above) and speed
+against LibRaw PPG (2.3x slower single-threaded, 1.7x with 16 threads); against LibRaw AHD it is level single-threaded (601 ms against 595) and 1.2x
+slower with 16 threads. FlashRaw AHD, the same method as LibRaw AHD, takes 392 ms single-threaded against 595 ms and 82 ms with 16 threads against 192 ms.
+On X-Trans edge-aware is 4.6x to 7.5x faster than Markesteijn at one thread and 2.0x to 3.6x at 16.
 
 ## Performance regression detection
 
