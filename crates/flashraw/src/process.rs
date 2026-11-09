@@ -449,6 +449,16 @@ impl DevelopParams {
 /// for [`Highlights::Reconstruct`].
 const CLIP_LEVEL: f32 = 0.98;
 
+/// The largest factor over its clipped value that a prediction may raise a channel by. Fitted on
+/// the frame's unclipped blocks, the prediction can overshoot badly where the colour of the
+/// clipped area is unlike the rest of the frame. In a simulation (26 crops of real frames, the
+/// brightest 4 % of the greens clipped, the clipped pixels rebuilt and compared with the unclipped
+/// development in the log domain), capping the prediction at 1.5 times the clipped value cut the
+/// worst case against plain clipping from +0.067 to +0.010 and the mean error from 0.0517 to 0.0484
+/// (plain clipping 0.0561). The simulation clips only a little above the unclipped values, so it
+/// favours a low cap; real saturation reaches higher, which is why the cap is not lower.
+const RECON_HEADROOM: f32 = 1.5;
+
 /// What [`Highlights::Reconstruct`] knows about a frame: predictions of a clipped channel from
 /// the others in white-balanced linear camera RGB, fitted on the frame's unclipped blocks
 /// ([`fit_reconstruction`]). The default predicts nothing.
@@ -470,7 +480,7 @@ impl ReconModel {
                 let k = clipped.iter().position(|&c| c).unwrap();
                 if let Some([a, b]) = self.alone[k] {
                     let (i, j) = ((k + 1) % 3, (k + 2) % 3);
-                    u[k] = u[k].max(a * u[i] + b * u[j]);
+                    u[k] = u[k].max((a * u[i] + b * u[j]).min(RECON_HEADROOM * u[k]));
                 }
             }
             2 => {
@@ -478,7 +488,7 @@ impl ReconModel {
                 for k in 0..3 {
                     if clipped[k] {
                         if let Some(r) = self.ratio[k][j] {
-                            u[k] = u[k].max(r * u[j]);
+                            u[k] = u[k].max((r * u[j]).min(RECON_HEADROOM * u[k]));
                         }
                     }
                 }
@@ -1870,6 +1880,22 @@ mod tests {
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
         info.white_balance = None;
         assert_eq!(DevelopParams::new(&info, Demosaic::Bilinear, Rect::full(8, 8)).wb, [1.0; 4]);
+    }
+
+    #[test]
+    fn reconstruct_prediction_is_capped_over_the_clipped_value() {
+        let mut m = ReconModel::default();
+        m.alone[0] = Some([10.0, 0.0]);
+        m.ratio[1][0] = Some(10.0);
+        let mut u = [1.0, 0.5, 0.5];
+        m.apply(&mut u, [true, false, false]);
+        assert_eq!(u[0], RECON_HEADROOM);
+        // Two channels clipped: both are raised from the unclipped one, each at most to the cap.
+        let mut u = [1.0, 1.0, 0.2];
+        m.ratio[0][2] = Some(1.2);
+        m.ratio[1][2] = Some(10.0);
+        m.apply(&mut u, [true, true, false]);
+        assert!((u[0] - 1.0f32.max(1.2 * 0.2)).abs() < 1e-6 && u[1] == RECON_HEADROOM);
     }
 
     #[test]
