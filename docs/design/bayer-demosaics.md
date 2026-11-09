@@ -65,8 +65,8 @@ benchmarks, `tools/bench/demosaic/own.py`. sRGB PSNR over all pixels / over the 
 Implementation: green and the diagonal colour differences are computed for every pixel of a row in branch-free loops
 (the measured samples are put back afterwards), so the loops vectorise; the halo is the real support, 4 samples.
 Develop time of the post-process stage (demosaic, white balance, colour matrix, 16-bit sRGB encoding) of an 18 MP
-Bayer file, best of 3: see the speed tables in [benchmarks](../benchmarks.md). Against bilinear, Ppg adds about 3 %
-and Rcd about 12 % on one thread.
+Bayer file, best of 3: see the speed tables in [benchmarks](../benchmarks.md). On one thread of an Apple M1 Ultra,
+bilinear takes 200 ms, Ppg 240 and Rcd 264 (LibRaw PPG 239).
 
 Experiments that were run and not kept:
 

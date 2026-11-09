@@ -837,7 +837,8 @@ Bundle size with all decoders (wasm-opt -O3), from [wasm.md](wasm.md#sizes), whi
 FlashRaw's demosaics (`EdgeAware`, `Ahd`, `Ppg`, `Rcd`, bilinear) against those of LibRaw (through rawpy), OpenCV and colour-demosaicing, with the scripts of
 [`tools/bench/demosaic`](../tools/bench/demosaic/README.md) (data in
 [`benches/results/demosaic`](../benches/results/demosaic)). FlashRaw's edge-aware tables are the held-out set (trained without the
-evaluation tiles), so the ground-truth numbers are not flattering. Three views:
+evaluation tiles), so the ground-truth numbers are not flattering. The quality runs used LibRaw 0.22.2 through rawpy 0.28.0 on
+Linux (its rows equal those of the earlier run with 0.22.1). Three views:
 
 **Against a known answer.** 11 photographic and 12 synthetic 384x384 ground-truth tiles are re-mosaicked (Bayer and
 X-Trans), written as DNG, developed by every method and compared with the original: sRGB-encoded PSNR over all
@@ -926,6 +927,27 @@ hardware threads each, so the 16-thread figures gain little over 8. Where FlashR
 against LibRaw PPG (2.3x slower single-threaded, 1.7x with 16 threads); against LibRaw AHD it is level single-threaded (601 ms against 595) and 1.2x
 slower with 16 threads. FlashRaw AHD, the same method as LibRaw AHD, takes 392 ms single-threaded against 595 ms and 82 ms with 16 threads against 192 ms.
 On X-Trans edge-aware is 4.6x to 7.5x faster than Markesteijn at one thread and 2.0x to 3.6x at 16.
+
+**Speed on Apple Silicon.** The same post-process stage on an Apple M1 Ultra (macOS, 20 cores), LibRaw 0.22 through rawpy
+0.27 from PyPI, in ms (data in `benches/results/demosaic/speed-mac.json`). The rawpy wheel for macOS is built without
+OpenMP, so LibRaw runs on one thread whatever the thread count; read the 20-thread row as "FlashRaw's threads against
+a single-threaded LibRaw", and the 1-thread row as the like-for-like comparison.
+
+| | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | FlashRaw PPG | FlashRaw RCD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| Bayer, 1 thread | 200 | 1313 | 569 | 240 | 264 | 269 | 239 | 579 | 1613 | 1510 | 2012 | 2471 |
+| Bayer, 20 threads | 15 | 94 | 44 | 20 | 22 | 262 | 238 | 577 | 1612 | 1505 | 2007 | 2469 |
+
+| | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
+|---|---:|---:|---:|---:|---:|---:|
+| X-Trans, 1 thread | 640 | 1557 | 630 | 3448 | 7405 | 16337 |
+| X-Trans, 20 threads | 44 | 119 | 630 | 3445 | 7387 | 16360 |
+
+On one thread FlashRaw and LibRaw are level for the same method (PPG 240 against 239, AHD 569 against 579, X-Trans
+bilinear 640 against 630); FlashRaw's bilinear is faster on Bayer (200 against 269). FlashRaw edge-aware is 4.8 times
+faster than Markesteijn 1-pass on X-Trans and slightly faster than LibRaw DCB on Bayer (1313 against 1510). Compared to
+x86-64 the edge-aware demosaic is relatively slower on this machine: its kernels are compiled a second time for AVX2 on
+x86-64, while aarch64 runs the 4-lane NEON baseline.
 
 ## Performance regression detection
 
