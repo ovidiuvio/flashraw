@@ -202,7 +202,7 @@ impl<'a> FujiCompressed<'a> {
         par::for_each_index(self.blocks.len(), parallel, |b| {
             // Stripes outside the region are not claimed (claim returns None).
             let Some(mut tile) = grid.claim(b as u32, 0) else { return };
-            let (tw, th) = tile.size();
+            let (_, th) = tile.size();
             let (sx, sy) = (tile.skip_x as usize, tile.skip_y as usize);
             let q = self.q_bases.get(b).copied().unwrap_or(&[]);
             let emit = |line: usize, lines: &[u16]| {
@@ -211,11 +211,7 @@ impl<'a> FujiCompressed<'a> {
                     if y < sy || y - sy >= th {
                         continue;
                     }
-                    let row = tile.row(y - sy);
-                    let idx = map.idx[r].get(sx..sx + tw).unwrap_or(&[]);
-                    for (dst, &src) in row.iter_mut().zip(idx.iter()) {
-                        *dst = lines.get(src as usize).copied().unwrap_or(0);
-                    }
+                    map.emit_row(r, sx, tile.row(y - sy), lines);
                 }
             };
             let res = if h.lossless {
@@ -252,30 +248,87 @@ const B3: usize = 16;
 const B4: usize = 17;
 const LINES: usize = 18;
 
-/// Maps each of the 6 output rows × block columns to an index in the line buffers.
+/// Maps each of the 6 output rows × 6 horizontal CFA phases to its base index in the
+/// per-colour line buffers. Advancing by 6 output columns advances each line index by
+/// `step` (`4` for X-Trans, `3` for Bayer).
 struct OutputMap {
-    idx: [Vec<u32>; 6],
+    base: [[usize; 6]; 6],
+    step: usize,
+    bayer_2x2: bool,
 }
 
 impl OutputMap {
     fn new(h: &FujiHeader, colors: &ColorTile) -> Self {
         let stride = h.line_width() + 2;
-        let bs = h.block_size as usize;
-        let idx = std::array::from_fn(|r| {
-            (0..bs)
-                .map(|p| {
-                    let c = colors[r][p % 6];
-                    let line = match c {
-                        0 => R2 + r / 2,
-                        2 => B2 + r / 2,
-                        _ => G2 + r,
-                    };
-                    let i = if h.xtrans { (((p * 2 / 3) & !1) | ((p % 3) & 1)) + ((p % 3) >> 1) } else { p >> 1 };
-                    (line * stride + 1 + i) as u32
-                })
-                .collect()
+        let step = if h.xtrans { 4 } else { 3 };
+        let base = std::array::from_fn(|r| {
+            std::array::from_fn(|m| {
+                let c = colors[r][m];
+                let line = match c {
+                    0 => R2 + r / 2,
+                    2 => B2 + r / 2,
+                    _ => G2 + r,
+                };
+                let i = if h.xtrans { [0, 1, 1, 2, 3, 3][m] } else { m >> 1 };
+                line * stride + 1 + i
+            })
         });
-        OutputMap { idx }
+        let bayer_2x2 =
+            !h.xtrans && colors.iter().all(|r| r[0] == r[2] && r[0] == r[4] && r[1] == r[3] && r[1] == r[5]);
+        OutputMap { base, step, bayer_2x2 }
+    }
+
+    #[inline]
+    fn emit_row(&self, r: usize, sx: usize, row: &mut [u16], lines: &[u16]) {
+        if self.bayer_2x2 && (sx & 1) == 0 && (row.len() & 1) == 0 {
+            let pairs = row.len() / 2;
+            let half_sx = sx / 2;
+            let s0 = &lines[self.base[r][0] + half_sx..][..pairs];
+            let s1 = &lines[self.base[r][1] + half_sx..][..pairs];
+            for (dst, (&v0, &v1)) in row.chunks_exact_mut(2).zip(s0.iter().zip(s1.iter())) {
+                dst[0] = v0;
+                dst[1] = v1;
+            }
+            return;
+        }
+        if self.step == 4 && sx % 6 == 0 {
+            let chunks = row.len() / 6;
+            let k0 = sx / 6;
+            if chunks > 0 {
+                let [b0, b1, b2, b3, b4, b5] = self.base[r];
+                let start = k0 * 4;
+                let need = (chunks - 1) * 4 + 1;
+                let (s0, s1, s2, s3, s4, s5) = (
+                    &lines[b0 + start..][..need],
+                    &lines[b1 + start..][..need],
+                    &lines[b2 + start..][..need],
+                    &lines[b3 + start..][..need],
+                    &lines[b4 + start..][..need],
+                    &lines[b5 + start..][..need],
+                );
+                for (dk, dst) in row.chunks_exact_mut(6).enumerate() {
+                    let off = dk * 4;
+                    dst[0] = s0[off];
+                    dst[1] = s1[off];
+                    dst[2] = s2[off];
+                    dst[3] = s3[off];
+                    dst[4] = s4[off];
+                    dst[5] = s5[off];
+                }
+            }
+            let done = chunks * 6;
+            for (i, dst) in row[done..].iter_mut().enumerate() {
+                let p = sx + done + i;
+                *dst = lines[self.base[r][p % 6] + (p / 6) * 4];
+            }
+            return;
+        }
+        let base = &self.base[r];
+        let step = self.step;
+        for (i, dst) in row.iter_mut().enumerate() {
+            let p = sx + i;
+            *dst = lines[base[p % 6] + (p / 6) * step];
+        }
     }
 }
 
@@ -1027,5 +1080,34 @@ mod tests {
         c.decode(&mut a, 768, 12, &XT, false).unwrap();
         c.decode(&mut b, 768, 12, &XT, true).unwrap();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn output_map_matches_reference() {
+        for (xtrans, colors) in [(true, &XT), (false, &BAYER)] {
+            let h = FujiHeader::parse(&header(1, if xtrans { 16 } else { 0 }, 14, 12, 768, 768, 1)).unwrap();
+            let stride = h.line_width() + 2;
+            let lines: Vec<u16> = (0..LINES * stride).map(|i| (i * 37 + 11) as u16).collect();
+            let map = OutputMap::new(&h, colors);
+            for r in 0..6 {
+                let reference: Vec<u16> = (0..768usize)
+                    .map(|p| {
+                        let c = colors[r][p % 6];
+                        let line = match c {
+                            0 => R2 + r / 2,
+                            2 => B2 + r / 2,
+                            _ => G2 + r,
+                        };
+                        let i = if xtrans { (((p * 2 / 3) & !1) | ((p % 3) & 1)) + ((p % 3) >> 1) } else { p >> 1 };
+                        lines[line * stride + 1 + i]
+                    })
+                    .collect();
+                for (sx, len) in [(0, 768), (0, 744), (0, 13), (6, 25), (3, 19), (7, 700)] {
+                    let mut got = vec![0u16; len];
+                    map.emit_row(r, sx, &mut got, &lines);
+                    assert_eq!(&got[..], &reference[sx..sx + len], "xtrans={xtrans} r={r} sx={sx} len={len}");
+                }
+            }
+        }
     }
 }
