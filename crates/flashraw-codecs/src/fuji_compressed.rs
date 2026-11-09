@@ -534,12 +534,6 @@ struct BlockDecoder<'c, 'a, const LOSSY: bool> {
     overrun: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Even {
-    Decode,
-    Interp,
-}
-
 impl<'c, 'a, const LOSSY: bool> BlockDecoder<'c, 'a, LOSSY> {
     fn new(c: &'c Common, data: &'a [u8], q_bases: &'a [u8]) -> Result<Self> {
         let stride = c.line_width + 2;
@@ -592,46 +586,39 @@ impl<'c, 'a, const LOSSY: bool> BlockDecoder<'c, 'a, LOSSY> {
             }
         }
         if self.c.xtrans {
-            let rule_a = |p: usize| if p & 3 != 0 { Even::Decode } else { Even::Interp };
-            let rule_b = |p: usize| if p & 3 == 2 { Even::Interp } else { Even::Decode };
-            self.pass(R2, G2, 0, |_| Even::Interp, |_| Even::Decode);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G3, B2, 1, |_| Even::Decode, |_| Even::Interp);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
-            self.pass(R3, G4, 2, rule_a, |_| Even::Interp);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G5, B3, 0, |_| Even::Decode, rule_b);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
-            self.pass(R4, G6, 1, rule_b, |_| Even::Decode);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G7, B4, 2, |_| Even::Interp, rule_a);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
+            const S: usize = 514;
+            self.pass::<S, false, false, true, true>(R2, G2, 0);
+            self.extend_one(R3);
+            self.extend_one(G3);
+            self.pass::<S, true, true, false, false>(G3, B2, 1);
+            self.extend_one(G4);
+            self.extend_one(B3);
+            self.pass::<S, false, true, false, false>(R3, G4, 2);
+            self.extend_one(R4);
+            self.extend_one(G5);
+            self.pass::<S, true, true, true, false>(G5, B3, 0);
+            self.extend_one(G6);
+            self.extend_one(B4);
+            self.pass::<S, true, false, true, true>(R4, G6, 1);
+            self.extend_one(G7);
+            self.pass::<S, false, false, false, true>(G7, B4, 2);
         } else {
-            let d = |_: usize| Even::Decode;
-            self.pass(R2, G2, 0, d, d);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G3, B2, 1, d, d);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
-            self.pass(R3, G4, 2, d, d);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G5, B3, 0, d, d);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
-            self.pass(R4, G6, 1, d, d);
-            self.extend(R2, R4);
-            self.extend(G2, G7);
-            self.pass(G7, B4, 2, d, d);
-            self.extend(G2, G7);
-            self.extend(B2, B4);
+            const S: usize = 386;
+            self.pass::<S, true, true, true, true>(R2, G2, 0);
+            self.extend_one(R3);
+            self.extend_one(G3);
+            self.pass::<S, true, true, true, true>(G3, B2, 1);
+            self.extend_one(G4);
+            self.extend_one(B3);
+            self.pass::<S, true, true, true, true>(R3, G4, 2);
+            self.extend_one(R4);
+            self.extend_one(G5);
+            self.pass::<S, true, true, true, true>(G5, B3, 0);
+            self.extend_one(G6);
+            self.extend_one(B4);
+            self.pass::<S, true, true, true, true>(R4, G6, 1);
+            self.extend_one(G7);
+            self.pass::<S, true, true, true, true>(G7, B4, 2);
         }
         // A stripe is padded with a single zero byte and any further read fails:
         // consuming more than that means the stripe is truncated or corrupt.
@@ -648,252 +635,295 @@ impl<'c, 'a, const LOSSY: bool> BlockDecoder<'c, 'a, LOSSY> {
     }
 
     /// One coding pass over two colour lines `a` and `b`: even positions of both lines
-    /// (decoded or interpolated per `rule_a`/`rule_b`), with odd positions lagging five
-    /// even steps behind (they need the even neighbours on both sides).
+    /// (decoded or interpolated per `A0`/`A2`/`B0`/`B2` at `ep & 3 == 0` and `2`), with
+    /// odd positions lagging five even steps behind (`op = ep - 7`).
     #[inline(never)]
-    fn pass(&mut self, a: usize, b: usize, g: usize, rule_a: impl Fn(usize) -> Even, rule_b: impl Fn(usize) -> Even) {
-        let s = self.stride;
+    fn pass<const S: usize, const A0: bool, const A2: bool, const B0: bool, const B2: bool>(
+        &mut self,
+        a: usize,
+        b: usize,
+        g: usize,
+    ) {
+        let lw = S - 2;
+        let win_len = 2 * S + 11;
+        let edge_len = 2 * S + 9;
         // Everything the samples touch is held in locals for the pass: the bit pump stays
         // in registers, and the line windows and statistics are borrowed once.
         let mut lines = std::mem::take(&mut self.lines);
-        let mut st = Sampler { c: self.c, qt: self.qt, bits: self.bits, overrun: false };
+        let mut st = Sampler {
+            lut: &self.qt.lut,
+            max_value: self.c.max_value,
+            max_zeros: self.qt.max_zeros,
+            raw_bits: self.qt.raw_bits,
+            qt: self.qt,
+            extra: self.c.extra.as_ref(),
+            bits: self.bits,
+            overrun: false,
+        };
         let [even, odd] = &mut self.grads;
         let (ge, go) = (&mut even[g], &mut odd[g]);
         // `a` lies below `b` in the buffer and their three-line windows do not overlap.
-        let (lo, hi) = lines.split_at_mut((b - 2) * s);
-        let mut la = Lines::new(&mut lo[(a - 2) * s..], s);
-        let mut lb = Lines::new(hi, s);
-        let lw = la.width();
-        let (mut ep, mut op) = (0usize, 1usize);
-        while ep < lw || op < lw {
-            if ep < lw {
-                match rule_a(ep) {
-                    Even::Decode => la.decode_even::<LOSSY>(&mut st, ge, ep),
-                    Even::Interp => la.interp_even(ep),
-                }
-                match rule_b(ep) {
-                    Even::Decode => lb.decode_even::<LOSSY>(&mut st, ge, ep),
-                    Even::Interp => lb.interp_even(ep),
-                }
-                ep += 2;
-            }
-            if ep > 8 {
-                la.decode_odd::<LOSSY>(&mut st, go, op);
-                lb.decode_odd::<LOSSY>(&mut st, go, op);
-                op += 2;
-            }
+        let (lo, hi) = lines.split_at_mut((b - 2) * S);
+        let la = &mut lo[(a - 2) * S..(a + 1) * S];
+        let lb = &mut hi[..3 * S];
+
+        // Prologue: first four even steps (`ep = 0, 2, 4, 6`) before odd positions start.
+        {
+            let wa = &mut la[..edge_len];
+            let wb = &mut lb[..edge_len];
+            step_even_win::<S, LOSSY, A0, 0>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B0, 0>(wb, &mut st, ge);
+            step_even_win::<S, LOSSY, A2, 2>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B2, 2>(wb, &mut st, ge);
+            step_even_win::<S, LOSSY, A0, 4>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B0, 4>(wb, &mut st, ge);
+            step_even_win::<S, LOSSY, A2, 6>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B2, 6>(wb, &mut st, ge);
         }
+
+        // Steady-state main loop: two even/odd pairs per iteration (`ep` and `ep + 2`).
+        for ep in (8..lw).step_by(4) {
+            let wa = &mut la[ep - 7..ep - 7 + win_len];
+            let wb = &mut lb[ep - 7..ep - 7 + win_len];
+            step_even_win::<S, LOSSY, A0, 7>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B0, 7>(wb, &mut st, ge);
+            decode_odd_win::<S, LOSSY, 0>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 0>(wb, &mut st, go);
+
+            step_even_win::<S, LOSSY, A2, 9>(wa, &mut st, ge);
+            step_even_win::<S, LOSSY, B2, 9>(wb, &mut st, ge);
+            decode_odd_win::<S, LOSSY, 2>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 2>(wb, &mut st, go);
+        }
+
+        // Epilogue: last four odd steps (`op = lw - 7, lw - 5, lw - 3, lw - 1`).
+        {
+            let wa = &mut la[lw - 7..lw - 7 + edge_len];
+            let wb = &mut lb[lw - 7..lw - 7 + edge_len];
+            decode_odd_win::<S, LOSSY, 0>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 0>(wb, &mut st, go);
+            decode_odd_win::<S, LOSSY, 2>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 2>(wb, &mut st, go);
+            decode_odd_win::<S, LOSSY, 4>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 4>(wb, &mut st, go);
+            decode_odd_win::<S, LOSSY, 6>(wa, &mut st, go);
+            decode_odd_win::<S, LOSSY, 6>(wb, &mut st, go);
+        }
+
         self.bits = st.bits;
         self.overrun |= st.overrun;
         self.lines = lines;
     }
 
-    /// Copy edge samples from the previous line into the guard positions.
-    fn extend(&mut self, first: usize, last: usize) {
+    /// Copy edge samples from the previous line `l - 1` into line `l`'s guard positions.
+    #[inline(always)]
+    fn extend_one(&mut self, l: usize) {
         let (s, lw) = (self.stride, self.c.line_width);
-        for l in first..=last {
-            self.lines[l * s] = self.lines[(l - 1) * s + 1];
-            self.lines[l * s + lw + 1] = self.lines[(l - 1) * s + lw];
-        }
+        self.lines[l * s] = self.lines[(l - 1) * s + 1];
+        self.lines[l * s + lw + 1] = self.lines[(l - 1) * s + lw];
     }
 
     /// Rotate line context after a decoded line: the last two lines of each colour
-    /// become the first two, the rest is cleared.
+    /// become the first two, and the first new line of each colour gets its guard samples.
     fn advance_line(&mut self) {
         let s = self.stride;
         let lw = self.c.line_width;
         for (dst, src) in [(R0, R3), (R0 + 1, R4), (G0, G6), (G0 + 1, G7), (B0, B3), (B0 + 1, B4)] {
             self.lines.copy_within(src * s..(src + 1) * s, dst * s);
         }
-        for (first, n) in [(R2, 3), (G2, 6), (B2, 3)] {
-            self.lines[first * s..(first + n) * s].fill(0);
+        for first in [R2, G2, B2] {
             self.lines[first * s] = self.lines[(first - 1) * s + 1];
             self.lines[first * s + lw + 1] = self.lines[(first - 1) * s + lw];
         }
     }
 }
 
+/// Cold fallback when the Rice unary prefix exceeds the fast window or escapes.
+#[cold]
+#[inline(never)]
+fn decode_code_slow<'a>(
+    mut bits: BitPumpMsb<'a>,
+    mut overrun: bool,
+    k: u32,
+    max_zeros: i32,
+    raw_bits: u32,
+) -> (BitPumpMsb<'a>, bool, i32) {
+    let mut sample = 0i32;
+    loop {
+        bits.fill();
+        let w = bits.peek_no_fill(32);
+        if w != 0 {
+            let lz = w.leading_zeros();
+            bits.skip_no_fill(lz + 1);
+            sample += lz as i32;
+            break;
+        }
+        bits.skip_no_fill(32);
+        sample += 32;
+        if bits.exhausted() {
+            overrun = true;
+            break;
+        }
+    }
+    let code =
+        if sample < max_zeros { ((sample as u32) << k | bits.get(k)) as i32 } else { bits.get(raw_bits) as i32 + 1 };
+    (bits, overrun, code)
+}
+
 /// Entropy-decoding state of one pass, held in locals.
+#[derive(Clone, Copy)]
 struct Sampler<'c, 'a> {
-    c: &'c Common,
-    /// Current main table.
+    lut: &'c [i8; LUT_LEN],
+    max_value: i32,
+    max_zeros: i32,
+    raw_bits: u32,
+    /// Current main table (used by lossy mode).
     qt: &'c QTable,
+    extra: Option<&'c [QTable; 3]>,
     bits: BitPumpMsb<'a>,
     /// Set when the bit stream ran dry inside a zero run.
     overrun: bool,
 }
 
 impl Sampler<'_, '_> {
-    /// Count zero bits up to (and consuming) the next one bit.
-    #[inline(always)]
-    fn zero_run(&mut self) -> i32 {
-        let mut n = 0i32;
-        loop {
-            self.bits.fill();
-            let w = self.bits.peek_no_fill(32);
-            if w != 0 {
-                let lz = w.leading_zeros();
-                self.bits.skip_no_fill(lz + 1);
-                return n + lz as i32;
-            }
-            self.bits.skip_no_fill(32);
-            n += 32;
-            if self.bits.exhausted() {
-                self.overrun = true;
-                return n;
-            }
-        }
-    }
-
     /// Decode one residual and reconstruct the sample from the prediction `interp`.
     /// `grads` are the statistics of the sample's side (even or odd) and pass.
     #[inline(always)]
-    fn decode_residual<const LOSSY: bool>(
-        &mut self,
-        grads: &mut Grads,
-        flat: i32,
-        v1: i32,
-        v2: i32,
-        interp: i32,
-    ) -> u16 {
-        let c = self.c;
-        let max = c.max_value;
+    fn decode_residual<const LOSSY: bool>(&mut self, grads: &mut Grads, v1: i32, v2: i32, interp: i32) -> u16 {
+        let max = self.max_value;
+        if !LOSSY {
+            let l1 = self.lut[v1 as usize & (LUT_LEN - 1)] as i32;
+            let l2 = self.lut[v2 as usize & (LUT_LEN - 1)] as i32;
+            let grad = 9 * l1 + l2;
+            let gi = (grad.unsigned_abs() as usize).min(40);
+            let stat = &mut grads.main[gi];
+            let (sum, n, k, mask) = (stat.sum, stat.n as i32, stat.k as u32, stat.mask as u32);
+            self.bits.refill_force();
+            let w = self.bits.peek_no_fill(32);
+            let lz = w.leading_zeros();
+            let code = if w != 0 && (lz as i32) < self.max_zeros && lz + 1 + k <= 32 {
+                let total = lz + 1 + k;
+                let v = (w >> (32 - total)) & mask;
+                self.bits.skip_no_fill(total);
+                ((lz << k) | v) as i32
+            } else {
+                let (bits, overrun, c) = decode_code_slow(self.bits, self.overrun, k, self.max_zeros, self.raw_bits);
+                self.bits = bits;
+                self.overrun = overrun;
+                c
+            };
+            let code = (code >> 1) ^ -(code & 1);
+            let h = (n == MIN_VALUE) as u32;
+            let (sum, n) = ((sum + code.abs()) >> h, n >> h);
+            *stat = new_stat(sum, n + 1);
+            let delta = if grad < 0 { -code } else { code };
+            let mut v = interp + delta;
+            let span = max + 1;
+            let adj = if v < 0 {
+                span
+            } else if v > max {
+                -span
+            } else {
+                0
+            };
+            v += adj;
+            return v.max(0).min(max) as u16;
+        }
+
+        let flat = v1.abs() + v2.abs();
         let mut qt = self.qt;
         let mut ctx = usize::MAX;
-        if LOSSY {
-            // Lossy streams code flat areas with coarser fixed tables.
-            let extra = c.extra.as_ref().unwrap();
-            let mut i = 1;
-            while qt.q_base >= i && i < 4 {
-                let t = &extra[(i - 1) as usize];
-                if flat <= t.max_grad {
-                    qt = t;
-                    ctx = (i - 1) as usize;
-                    break;
-                }
-                i += 1;
+        let extra = self.extra.unwrap();
+        let mut i = 1;
+        while qt.q_base >= i && i < 4 {
+            let t = &extra[(i - 1) as usize];
+            if flat <= t.max_grad {
+                qt = t;
+                ctx = (i - 1) as usize;
+                break;
             }
+            i += 1;
         }
-        // The main table always weighs the first difference by 9.
-        let mult = if LOSSY { qt.grad_mult } else { 9 };
-        let grad = mult * qt.level(v1) + qt.level(v2);
+        let grad = qt.grad_mult * qt.level(v1) + qt.level(v2);
         let gi = grad.unsigned_abs() as usize;
-        let st = if LOSSY && ctx != usize::MAX { grads.lossy[ctx][gi.min(4)] } else { grads.main[gi.min(40)] };
-        let (sum, n, k, mask) = (st.sum, st.n as i32, st.k as u32, st.mask as u32);
-        // Fast path: the unary prefix and the Rice remainder fit in one 32-bit peek.
-        // The refill is unconditional: it is branch-free, while testing the fill level
-        // mispredicts on the irregular code lengths.
+        let stat = if ctx != usize::MAX { &mut grads.lossy[ctx][gi.min(4)] } else { &mut grads.main[gi.min(40)] };
+        let (sum, n, k, mask) = (stat.sum, stat.n as i32, stat.k as u32, stat.mask as u32);
         self.bits.refill_force();
         let w = self.bits.peek_no_fill(32);
         let lz = w.leading_zeros();
         let code = if w != 0 && (lz as i32) < qt.max_zeros && lz + 1 + k <= 32 {
             let total = lz + 1 + k;
-            // The remainder is the `k` bits after the prefix's terminating one bit.
             let v = (w >> (32 - total)) & mask;
             self.bits.skip_no_fill(total);
             ((lz << k) | v) as i32
         } else {
-            let sample = self.zero_run();
-            if sample < qt.max_zeros {
-                ((sample as u32) << k | self.bits.get(k)) as i32
-            } else {
-                self.bits.get(qt.raw_bits) as i32 + 1
-            }
+            let (bits, overrun, c) = decode_code_slow(self.bits, self.overrun, k, qt.max_zeros, qt.raw_bits);
+            self.bits = bits;
+            self.overrun = overrun;
+            c
         };
-        // Out-of-range codes are tolerated rather than treated as fatal.
-        // Zig-zag decode (odd codes are negative): branch-free `code & 1 ? -1 - code/2 : code/2`.
         let code = (code >> 1) ^ -(code & 1);
-        // Halve the statistics when the count reaches MIN_VALUE (branch-free: rare but
-        // irregular).
         let h = (n == MIN_VALUE) as u32;
         let (sum, n) = ((sum + code.abs()) >> h, n >> h);
-        let stat =
-            if LOSSY && ctx != usize::MAX { &mut grads.lossy[ctx][gi.min(4)] } else { &mut grads.main[gi.min(40)] };
         *stat = new_stat(sum, n + 1);
-        // Lossless streams always quantise with base 0 (step 1).
-        let (q_base, step) = if LOSSY { (qt.q_base, 2 * qt.q_base + 1) } else { (0, 1) };
-        // The residual's sign follows the gradient's (branch-free: (grad >> 31) | 1 is ±1).
-        let mut v = interp + ((grad >> 31) | 1) * code * step;
-        if v < -q_base {
-            v += qt.total_values * step;
+        let (q_base, step) = (qt.q_base, 2 * qt.q_base + 1);
+        let delta = (if grad < 0 { -code } else { code }) * step;
+        let mut v = interp + delta;
+        let span = qt.total_values * step;
+        let adj = if v < -q_base {
+            span
         } else if v > q_base + max {
-            v -= qt.total_values * step;
-        }
-        v.clamp(0, max) as u16
+            -span
+        } else {
+            0
+        };
+        v += adj;
+        v.max(0).min(max) as u16
     }
 }
 
-/// The three-line window of one colour line in a pass: the two lines above (read) and
-/// the line being decoded. Each line is `width + 2` samples with one guard on each side.
-struct Lines<'l> {
-    up2: &'l [u16],
-    up1: &'l [u16],
-    cur: &'l mut [u16],
+#[inline(always)]
+fn step_even_win<const S: usize, const LOSSY: bool, const DECODE: bool, const OFF: usize>(
+    w: &mut [u16],
+    st: &mut Sampler,
+    grads: &mut Grads,
+) {
+    let rf = w[OFF + 1] as i32;
+    let rc = w[S + OFF] as i32;
+    let rb = w[S + OFF + 1] as i32;
+    let rd = w[S + OFF + 2] as i32;
+    let interp = even_prediction(rf, rc, rb, rd) >> 2;
+    w[2 * S + OFF + 1] =
+        if DECODE { st.decode_residual::<LOSSY>(grads, rb - rf, rc - rb, interp) } else { interp as u16 };
 }
 
-impl<'l> Lines<'l> {
-    /// `block` starts at the first of the three lines; `s` is the line stride.
-    #[inline(always)]
-    fn new(block: &'l mut [u16], s: usize) -> Self {
-        let (up2, rest) = block.split_at_mut(s);
-        let (up1, rest) = rest.split_at_mut(s);
-        Lines { up2, up1, cur: &mut rest[..s] }
-    }
-
-    /// Number of samples per line (positions `0..width`, stored at `1..=width`).
-    #[inline(always)]
-    fn width(&self) -> usize {
-        self.cur.len().saturating_sub(2)
-    }
-
-    /// Even-position neighbours of `pos`: `(rf, rc, rb, rd)`.
-    #[inline(always)]
-    fn even_ctx(&self, pos: usize) -> (i32, i32, i32, i32) {
-        let up = &self.up1[pos..pos + 3];
-        (self.up2[pos + 1] as i32, up[0] as i32, up[1] as i32, up[2] as i32)
-    }
-
-    #[inline(always)]
-    fn interp_even(&mut self, pos: usize) {
-        let (rf, rc, rb, rd) = self.even_ctx(pos);
-        self.cur[pos + 1] = (even_prediction(rf, rc, rb, rd) >> 2) as u16;
-    }
-
-    #[inline(always)]
-    fn decode_even<const LOSSY: bool>(&mut self, st: &mut Sampler, grads: &mut Grads, pos: usize) {
-        let (rf, rc, rb, rd) = self.even_ctx(pos);
-        let interp = even_prediction(rf, rc, rb, rd) >> 2;
-        let flat = (rf - rb).abs() + (rc - rb).abs();
-        self.cur[pos + 1] = st.decode_residual::<LOSSY>(grads, flat, rb - rf, rc - rb, interp);
-    }
-
-    #[inline(always)]
-    fn decode_odd<const LOSSY: bool>(&mut self, st: &mut Sampler, grads: &mut Grads, pos: usize) {
-        let up = &self.up1[pos..pos + 3];
-        let (rc, rb, rd) = (up[0] as i32, up[1] as i32, up[2] as i32);
-        let cur = &mut self.cur[pos..pos + 3];
-        let (ra, rg) = (cur[0] as i32, cur[2] as i32);
-        // `rb` is a local extremum among (rc, rb, rd) exactly when both differences share a
-        // sign (and neither is zero); then the prediction also weighs `rb`.
-        let (x, y) = (rb - rc, rb - rd);
-        let extremum = ((x ^ y) >= 0) & (x != 0) & (y != 0);
-        let e = -(extremum as i32);
-        let interp = (((rg + ra + 2 * rb) >> 2) & e) | (((ra + rg) >> 1) & !e);
-        let flat = (rb - rc).abs() + (rc - ra).abs();
-        cur[1] = st.decode_residual::<LOSSY>(grads, flat, rb - rc, rc - ra, interp);
-    }
+#[inline(always)]
+fn decode_odd_win<const S: usize, const LOSSY: bool, const OFF: usize>(
+    w: &mut [u16],
+    st: &mut Sampler,
+    grads: &mut Grads,
+) {
+    let rc = w[S + OFF] as i32;
+    let rb = w[S + OFF + 1] as i32;
+    let rd = w[S + OFF + 2] as i32;
+    let ra = w[2 * S + OFF] as i32;
+    let rg = w[2 * S + OFF + 2] as i32;
+    let (x, y) = (rb - rc, rb - rd);
+    let interp = if (x ^ y) >= 0 && x != 0 && y != 0 { (rg + ra + 2 * rb) >> 2 } else { (ra + rg) >> 1 };
+    w[2 * S + OFF + 1] = st.decode_residual::<LOSSY>(grads, rb - rc, rc - ra, interp);
 }
 
 /// Edge-directed prediction for even positions (four times the predicted value).
 #[inline(always)]
 fn even_prediction(rf: i32, rc: i32, rb: i32, rd: i32) -> i32 {
     let (d_cb, d_fb, d_db) = ((rc - rb).abs(), (rf - rb).abs(), (rd - rb).abs());
-    // Drop the neighbour that deviates most from `rb`. Masks instead of selects: the
-    // choice is data-dependent and unpredictable, and branch-free arithmetic keeps
-    // compilers from turning it into branches.
-    let mc = -(((d_cb > d_fb) & (d_cb > d_db)) as i32);
-    let md = -(((d_db > d_cb) & (d_db > d_fb)) as i32) & !mc;
-    let dropped = (rc & mc) | (rd & md) | (rf & !(mc | md));
+    let dropped = if d_cb > d_fb && d_cb > d_db {
+        rc
+    } else if d_db > d_cb && d_db > d_fb {
+        rd
+    } else {
+        rf
+    };
     rf + rc + rd - dropped + 2 * rb
 }
 
