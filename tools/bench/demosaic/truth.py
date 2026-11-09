@@ -35,6 +35,7 @@ def cdm(m, kind):
     return f(m, 'RGGB').astype(np.float32)
 METHODS = {
  'bayer': [('FlashRaw bilinear', 'fr', 'bilinear'), ('FlashRaw edge-aware', 'fr', 'edge-aware'), ('FlashRaw AHD', 'fr', 'ahd'),
+           ('FlashRaw PPG', 'fr', 'ppg'), ('FlashRaw RCD', 'fr', 'rcd'),
            ('LibRaw linear', 'lr', 0), ('LibRaw VNG', 'lr', 1), ('LibRaw PPG', 'lr', 2), ('LibRaw AHD', 'lr', 3), ('LibRaw DCB', 'lr', 4), ('LibRaw DHT', 'lr', 11), ('LibRaw AAHD', 'lr', 12),
            ('OpenCV bilinear', 'cv', 'bilinear'), ('OpenCV VNG', 'cv', 'vng'), ('OpenCV edge-aware', 'cv', 'ea'),
            ('colour-demosaicing Malvar', 'cd', 'malvar'), ('colour-demosaicing Menon', 'cd', 'menon'), ('colour-demosaicing DDFAPD', 'cd', 'ddfapd')],

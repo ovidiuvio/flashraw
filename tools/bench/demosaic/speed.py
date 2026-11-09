@@ -24,7 +24,7 @@ print(best*1000)
 res = []
 for cfa, p in files.items():
     for threads in A.threads:
-        for name, mode in (('FlashRaw bilinear','bilinear'),('FlashRaw edge-aware','edge-aware'))+((('FlashRaw AHD','ahd'),) if cfa == 'bayer' else ()):
+        for name, mode in (('FlashRaw bilinear','bilinear'),('FlashRaw edge-aware','edge-aware'))+((('FlashRaw AHD','ahd'),('FlashRaw PPG','ppg'),('FlashRaw RCD','rcd')) if cfa == 'bayer' else ()):
             j = json.loads(subprocess.run([FR,'benchmark',p,'--output','rgb16','--demosaic',mode,'--iterations','3','--threads',str(threads),'--json'],capture_output=True,check=True).stdout)
             j = j[0] if isinstance(j, list) else j
             res.append(dict(cfa=cfa, threads=threads, method=name, ms=j['stages']['Post-process'] if 'stages' in j else None, mp=j['megapixels']))
