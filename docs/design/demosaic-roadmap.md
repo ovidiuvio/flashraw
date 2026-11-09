@@ -71,8 +71,18 @@ the 22 test tiles, sRGB PSNR / edge PSNR / colour error:
 | retrained 7x7 | 35.50 / 30.46 / 0.0457 | 33.45 / 29.24 / 0.0479 | 31.37 / 27.90 / 0.0509 |
 | retrained 5x5 | 35.52 / 30.49 / 0.0457 | 33.47 / 29.26 / 0.0478 | 31.38 / 27.92 / 0.0507 |
 
-On real files (12 cameras) the colour speckle index is 2.07 for the shipped tables and 2.06 for both retrained sets;
-the fine-detail index is 6 % lower for the retrained sets. So 25 taps do as well as 49 on this data, which would roughly
+X-Trans, the same split (the same 22 test tiles, re-mosaicked with the 6x6 pattern):
+
+| X-Trans, test split | clean | moderate | high |
+|---|---|---|---|
+| shipped tables (7x7) | 35.52 / 30.50 / 0.0447 | 33.60 / 29.39 / 0.0465 | 31.53 / 28.09 / 0.0495 |
+| retrained 7x7 | 35.83 / 30.94 / 0.0436 | 33.72 / 29.64 / 0.0459 | 31.57 / 28.26 / 0.0488 |
+| retrained 5x5 | 35.80 / 30.90 / 0.0438 | 33.67 / 29.59 / 0.0461 | 31.53 / 28.21 / 0.0491 |
+
+On X-Trans 5x5 gives up 0.03 to 0.05 dB against 7x7 for about half the taps.
+
+On real Bayer files (12 cameras) the colour speckle index is 2.07 for the shipped tables and 2.06 for both retrained sets;
+the fine-detail index is 6 % lower for the retrained sets. So on Bayer 25 taps do as well as 49 on this data, which would roughly
 halve the cost of the filter stage. The shipped tables were **not** replaced: the retrained ones come from a different
 tile set than the one the published benchmark was produced with, and that benchmark cannot be repeated without the
 CC0 corpus and the reference converters, so the numbers in [benchmarks](../benchmarks.md) would stop describing the
