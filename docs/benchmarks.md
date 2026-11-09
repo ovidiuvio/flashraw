@@ -834,9 +834,9 @@ Bundle size with all decoders (wasm-opt -O3), from [wasm.md](wasm.md#sizes), whi
 
 ## Demosaic quality
 
-`Demosaic::EdgeAware` against the demosaics of LibRaw (through rawpy), OpenCV and colour-demosaicing, with the scripts of
+FlashRaw's demosaics (`EdgeAware`, `Ahd`, `Ppg`, `Rcd`, bilinear) against those of LibRaw (through rawpy), OpenCV and colour-demosaicing, with the scripts of
 [`tools/bench/demosaic`](../tools/bench/demosaic/README.md) (data in
-[`benches/results/demosaic`](../benches/results/demosaic)). FlashRaw's tables are the held-out set (trained without the
+[`benches/results/demosaic`](../benches/results/demosaic)). FlashRaw's edge-aware tables are the held-out set (trained without the
 evaluation tiles), so the ground-truth numbers are not flattering. Three views:
 
 **Against a known answer.** 11 photographic and 12 synthetic 384x384 ground-truth tiles are re-mosaicked (Bayer and
@@ -848,25 +848,32 @@ and the colour error). Noise is added to the mosaic before development (variance
 |---|---:|---:|---:|
 | FlashRaw bilinear | 42.43 / 39.24 | 37.03 / 35.55 | 33.30 / 32.41 |
 | **FlashRaw edge-aware** | 42.04 / 39.43 | 37.67 / 36.16 | 34.40 / 33.40 |
-| **FlashRaw AHD** | 41.51 / 38.87 | 34.97 / 33.99 | 30.95 / 30.42 |
+| **FlashRaw RCD** | 41.87 / 39.38 | 35.46 / 34.44 | 31.42 / 30.84 |
+| **FlashRaw AHD** | 41.76 / 39.02 | 35.67 / 34.59 | 31.74 / 31.16 |
+| **FlashRaw PPG** | 41.57 / 39.04 | 35.07 / 34.13 | 31.05 / 30.55 |
 | LibRaw AHD | 41.53 / 38.91 | 34.95 / 33.99 | 30.93 / 30.42 |
 | LibRaw PPG | 41.54 / 38.99 | 35.04 / 34.06 | 31.04 / 30.50 |
 | LibRaw DCB | 41.82 / 39.30 | 35.36 / 34.40 | 31.36 / 30.86 |
 | LibRaw VNG | 41.66 / 38.91 | 35.79 / 34.67 | 31.90 / 31.30 |
 | LibRaw DHT | 41.58 / 38.91 | 35.54 / 34.35 | 31.76 / 31.03 |
+| LibRaw AAHD | 41.37 / 38.85 | 34.98 / 34.01 | 31.01 / 30.47 |
 | OpenCV edge-aware | 42.39 / 39.23 | 36.85 / 35.40 | 33.10 / 32.22 |
 
 | X-Trans, photographic tiles | clean | moderate noise | high noise |
 |---|---:|---:|---:|
 | FlashRaw bilinear | 41.68 / 38.00 | 36.69 / 34.86 | 33.07 / 31.96 |
-| **FlashRaw edge-aware** | 41.89 / 39.14 | 37.64 / 36.03 | 34.44 / 33.38 |
+| **FlashRaw edge-aware** | 41.92 / 39.20 | 37.63 / 36.03 | 34.43 / 33.38 |
 | LibRaw Markesteijn 1-pass | 41.75 / 39.26 | 35.27 / 34.31 | 31.32 / 30.77 |
 | LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
 
 On a noisy mosaic, plain bilinear (a 3x3 average) has the highest PSNR of all methods but FlashRaw edge-aware, which
-smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)). On clean mosaics FlashRaw edge-aware has the best edge PSNR on Bayer (0.12 dB above LibRaw DCB, the next) and is
-0.12 dB behind LibRaw Markesteijn 1-pass on X-Trans.
+smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)). On clean Bayer mosaics FlashRaw
+edge-aware has the best edge PSNR (39.43, then FlashRaw RCD 39.38 and LibRaw DCB 39.30); FlashRaw RCD has the lowest
+colour error of every method on clean tiles (`truth.json`) and is above LibRaw DCB, the best LibRaw demosaic here, at every noise level;
+FlashRaw PPG and AHD are above LibRaw PPG and AHD at every noise level (AHD by 0.2 dB clean and 0.7 to 0.8 dB under
+noise, because it blends its two candidates instead of picking one, [design note](design/ahd-demosaic.md)). On clean
+X-Trans mosaics FlashRaw edge-aware has the best PSNR and is 0.06 dB behind LibRaw Markesteijn 1-pass on edge PSNR.
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
 index (mean Laplacian of R-G and B-G over the Laplacian of luma; lower = fewer false-colour dots and zipper patterns) and
@@ -877,8 +884,10 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
-| **FlashRaw edge-aware** | 2.09 | 2.20 |
-| **FlashRaw AHD** (Bayer only) | 1.62 | |
+| **FlashRaw edge-aware** | 2.09 | 2.18 |
+| **FlashRaw AHD** (Bayer only) | 1.44 | |
+| **FlashRaw PPG** (Bayer only) | 2.07 | |
+| **FlashRaw RCD** (Bayer only) | 2.01 | |
 | LibRaw linear (bilinear) | 5.14 | 4.26 |
 | LibRaw PPG | 1.95 | |
 | LibRaw DCB | 2.10 | |
@@ -888,12 +897,13 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | LibRaw AAHD | 1.49 | |
 | LibRaw Markesteijn 1-pass / 3-pass | | 2.02 / 2.01 |
 
-FlashRaw edge-aware is far cleaner than any bilinear, matches LibRaw DCB on Bayer, and is 0.2 behind Markesteijn on X-Trans. The
-LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1); FlashRaw's own homogeneity-directed demosaic
-(`Demosaic::Ahd`, [design note](design/ahd-demosaic.md)) closes that gap: on the 11 files that have LibRaw columns it scores 1.53 against 1.57
-for LibRaw AHD (edge-aware 1.97), and its fine-detail index is 0.0188 against 0.0189. It is the same published method, so the
-ground-truth numbers agree to 0.05 dB; it is further from the truth than edge-aware on clean and especially on noisy tiles
-(it keeps the noise as detail), so `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error.
+FlashRaw AHD is the cleanest Bayer demosaic of all: on the 11 files that have LibRaw columns it scores 1.34 against 1.49
+for LibRaw AAHD, the next, and 1.57 for LibRaw AHD (edge-aware 1.97, PPG 2.00, RCD 1.94 on those files). Its fine-detail
+index is lower than LibRaw AHD's (0.0168 against 0.0189) because blending the two candidates also averages noise, which
+the index counts as detail; against ground truth it is the closer of the two at every noise level (above). FlashRaw
+edge-aware is far cleaner than any bilinear and matches LibRaw DCB on Bayer; on X-Trans it is 0.2 behind Markesteijn and
+VNG. `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
+fewest false-colour dots.
 
 **Speed.** The post-process stage (demosaic, white balance, colour matrix, 8-bit encoding) of an 18 MP Bayer file (Canon EOS Rebel T2i) and a
 40 MP X-Trans file (Fujifilm X-T50) on the Linux x86-64 machine of this page (16 cores), LibRaw through rawpy

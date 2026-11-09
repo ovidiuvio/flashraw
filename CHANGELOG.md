@@ -9,10 +9,18 @@
   RGB outputs. Ground-truth numbers and the experiments that were not kept: `docs/design/bayer-demosaics.md`,
   `docs/design/demosaic-roadmap.md`. The edge-aware GPU build compiles again (the dense filter tables the GPU kernels read had
   been dropped by the register-tiled CPU rewrite).
+- `Demosaic::Ahd` blends its two candidates by their homogeneity instead of keeping the one with the larger count:
+  closer to ground truth at every noise level (clean 41.51 to 41.76 dB, noisy +0.7 to +0.8 dB) and fewer false-colour
+  dots on real files (speckle index 1.62 to 1.44). Output changes.
+- Edge-aware on X-Trans uses filters trained with a 5x5 support (level with the 7x7 ones on held-out tiles, fewer
+  multiplications). Output changes on X-Trans files.
+- Faster: `Ppg` and `Rcd` vectorise (interior output unchanged; the 4-pixel border ring is now developed by them
+  instead of bilinear), and the black-level normalisation, the 16-bit encode loop, the AHD green loop and the bilinear
+  path of X-Trans and other patterns do less work per pixel (output unchanged).
 - `Demosaic::Ahd` (`ahd` in the CLI, Python, JavaScript and C, `FLASHRAW_DEMOSAIC_AHD`): homogeneity-directed
   interpolation (Hirakawa and Parks) for Bayer sensors, written from the paper; other sensors use the edge-aware
   demosaic where it exists. On ground-truth tiles it scores within 0.05 dB of a widely used implementation of the
-  method (`docs/benchmarks.md`), and on real files its colour speckle index is 1.62 (edge-aware 2.09). CPU only (the GPU backend decodes
+  method (`docs/benchmarks.md`), and on real files its colour speckle index is 1.62 (edge-aware 2.09; the blend above followed). CPU only (the GPU backend decodes
   on the CPU for it); bit-identical for any thread count, band or crop. The compat layer maps `user_qual` 3 to it.
   Method and numbers: `docs/design/ahd-demosaic.md`, `docs/benchmarks.md`.
 - `Highlights::Reconstruct` caps its prediction at 1.5 times the clipped value of the channel: the global model could

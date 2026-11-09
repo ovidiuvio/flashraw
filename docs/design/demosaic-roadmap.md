@@ -43,10 +43,19 @@ and column tiling were tried and did not explain it.
 
 ## Built from it
 
-* `Demosaic::Auto`, `Demosaic::Ppg`, `Demosaic::Rcd` ([bayer-demosaics](bayer-demosaics.md)): on 98 held-out tiles `Ppg`
-  beats AHD on every measure at every noise level, and `Rcd` matches edge-aware on clean tiles.
+* `Demosaic::Auto`, `Demosaic::Ppg`, `Demosaic::Rcd` ([bayer-demosaics](bayer-demosaics.md)). On the held-out tiles of the
+  published benchmark `Ppg` is above LibRaw PPG and `Rcd` above LibRaw DCB at every noise level ([benchmarks](../benchmarks.md)).
+* `Demosaic::Ahd` blends its two candidates by their homogeneity instead of a hard choice: +0.25 dB clean and +0.7 to
+  +0.8 dB under noise, and the lowest real-file speckle index of every demosaic measured ([ahd-demosaic](ahd-demosaic.md)).
+* Edge-aware X-Trans filters trained with a 5x5 support (below).
+* Speed, all with unchanged output unless noted: `Ppg` and `Rcd` in branch-free row loops with a 4-sample halo (25 % and
+  14 % faster; the border ring changes), the black-level normalisation vectorised (it was about a fifth of the
+  post-process time of every demosaic), the 16-bit encode loop, `clamp` replaced in the AHD green loop (it kept the
+  loop scalar; 10 % faster), and the bilinear path of X-Trans and other patterns (11 % faster). Figures from an Apple
+  M1, one thread.
 * `tools/bench/demosaic/own.py`: a ground-truth benchmark that needs numpy only (the older scripts need LibRaw, OpenCV
-  and colour-demosaicing bindings), and `edgeaware_train.py gt` accepts X-Trans files (`.raf`).
+  and colour-demosaicing bindings), and `edgeaware_train.py gt` accepts X-Trans files (`.raf`). `truth.py --only`
+  merges into the earlier results, as its help said.
 
 ## Tried and not kept
 
@@ -62,42 +71,30 @@ and column tiling were tried and did not explain it.
 ## Filter support: 5x5 against 7x7
 
 `edgeaware_train.py train --support 2` trains 5x5 filters inside the 7x7 table layout (outer taps exactly zero, which
-the CPU kernels skip). Bayer, trained on the same 76 training tiles (every fifth source file left out) and scored on
-the 22 test tiles, sRGB PSNR / edge PSNR / colour error:
+the CPU kernels skip). Trained on the tiles of the published benchmark with the test split left out and scored with
+`truth.py` on the 11 held-out photographic tiles (PSNR / edge PSNR, dB):
 
-| Bayer, test split | clean | moderate | high |
+| held-out tiles | clean | moderate | high |
 |---|---|---|---|
-| shipped tables (7x7) | 35.31 / 30.20 / 0.0468 | 33.38 / 29.10 / 0.0487 | 31.32 / 27.79 / 0.0516 |
-| retrained 7x7 | 35.50 / 30.46 / 0.0457 | 33.45 / 29.24 / 0.0479 | 31.37 / 27.90 / 0.0509 |
-| retrained 5x5 | 35.52 / 30.49 / 0.0457 | 33.47 / 29.26 / 0.0478 | 31.38 / 27.92 / 0.0507 |
+| Bayer 7x7 (shipped) | 42.04 / 39.43 | 37.67 / 36.16 | 34.40 / 33.40 |
+| Bayer 5x5 | 41.99 / 39.32 | 37.67 / 36.15 | 34.41 / 33.41 |
+| X-Trans 7x7 | 41.89 / 39.14 | 37.64 / 36.03 | 34.44 / 33.38 |
+| X-Trans 5x5 (shipped) | 41.92 / 39.20 | 37.63 / 36.03 | 34.43 / 33.38 |
 
-X-Trans, the same split (the same 22 test tiles, re-mosaicked with the 6x6 pattern):
-
-| X-Trans, test split | clean | moderate | high |
-|---|---|---|---|
-| shipped tables (7x7) | 35.52 / 30.50 / 0.0447 | 33.60 / 29.39 / 0.0465 | 31.53 / 28.09 / 0.0495 |
-| retrained 7x7 | 35.83 / 30.94 / 0.0436 | 33.72 / 29.64 / 0.0459 | 31.57 / 28.26 / 0.0488 |
-| retrained 5x5 | 35.80 / 30.90 / 0.0438 | 33.67 / 29.59 / 0.0461 | 31.53 / 28.21 / 0.0491 |
-
-On X-Trans 5x5 gives up 0.03 to 0.05 dB against 7x7 for about half the taps.
-
-On real Bayer files (12 cameras) the colour speckle index is 2.07 for the shipped tables and 2.06 for both retrained sets;
-the fine-detail index is 6 % lower for the retrained sets. So on Bayer 25 taps do as well as 49 on this data, which would roughly
-halve the cost of the filter stage. The shipped tables were **not** replaced: the retrained ones come from a different
-tile set than the one the published benchmark was produced with, and that benchmark cannot be repeated without the
-CC0 corpus and the reference converters, so the numbers in [benchmarks](../benchmarks.md) would stop describing the
-shipped tables. The next step is to retrain on the corpus tiles with `--support 2`, rerun `truth.py`, and ship the
-tables and the new numbers together.
+X-Trans now ships the 5x5 filters (retrained on all tiles; a 7x7 retrain on the same tiles reproduces the previous
+table byte for byte, so the pipeline is reproducible). Bayer keeps 7x7: the 5x5 fit loses 0.11 dB of edge PSNR on
+clean tiles. The time saved is small, 5 to 7 % of the X-Trans develop on one thread (a measurement on a busy machine), because the halo stays at 8 (Bayer
+still needs it) and the filters are only part of the work. On a different, 98-tile set (half-size renders of 95
+real-world files) the two supports were also level on Bayer.
 
 ## Open
 
-* Retrain with 5x5 support on the corpus tiles, rerun the published benchmarks, then reduce the filter support in the
-  CPU and GPU kernels (the halo shrinks from 8 to 7).
-* Vectorise `Ppg` and `Rcd` like the AHD and edge-aware kernels (they are plain scalar loops).
 * Training data: full-resolution linear targets with simulated blur, clipping and read noise; split by source image
-  and camera. The 2x2-binned renders are slightly soft.
-* Measure the output tail (colour conversion and encoding, about 130 ms) on a quiet machine and vectorise it.
-* Speed tables for `Ppg` and `Rcd` against the reference converters, and the published real-file and ground-truth
-  tables for them, need the reference bindings (rawpy); this machine does not have them.
-* New X-Trans algorithms beyond edge-aware: the two cheap ideas above did not help, so the next candidates are
-  better trained filters (above), not a different combination rule.
+  and camera. The 2x2-binned renders are slightly soft. Not started.
+* The shared output stage: the 16-bit sRGB encode is about a third of a bilinear develop to `rgb16` (a gather and an
+  interpolation per sample); `finish_rgb` works on interleaved triples and does not vectorise.
+* Edge-aware on aarch64 is about twice as slow, relative to bilinear, as on x86-64 with AVX2: the kernels are written
+  for 16-lane accumulators and NEON has 4 lanes without the AVX2 second compile.
+* A per-pattern halo (7 for X-Trans with 5x5 filters) would save a little more on X-Trans.
+* New X-Trans algorithms beyond edge-aware: the homogeneity choice and the second pass did not help; better training
+  data is the next candidate.

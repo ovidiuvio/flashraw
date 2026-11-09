@@ -49,21 +49,24 @@ benchmarks, `tools/bench/demosaic/own.py`. sRGB PSNR over all pixels / over the 
 |---|---:|---:|---:|
 | bilinear | 34.78 / 29.07 / 0.0412 | 32.92 / 28.18 / 0.0445 | 30.89 / 27.02 / 0.0495 |
 | edge-aware | 35.08 / 29.67 / 0.0395 | **33.56 / 28.84 / 0.0414** | **31.77 / 27.73 / 0.0442** |
-| AHD | 34.75 / 29.42 / 0.0378 | 32.19 / 28.05 / 0.0402 | 29.68 / 26.46 / 0.0440 |
+| AHD | 35.00 / 29.64 / 0.0376 | 32.64 / 28.39 / 0.0397 | 30.26 / 26.91 / **0.0429** |
 | **Ppg** | 34.91 / 29.63 / 0.0369 | 32.34 / 28.24 / 0.0397 | 29.81 / 26.62 / 0.0440 |
 | **Rcd** | **35.08 / 29.79 / 0.0368** | 32.57 / 28.43 / 0.0397 | 30.07 / 26.82 / 0.0439 |
 
-* Ppg is better than AHD on every measure at every noise level of this set (0.16 dB more PSNR and 0.2 dB more
-  edge PSNR on clean tiles, a lower colour error), and it is a much simpler method.
+* Ppg is level with AHD's first version (the paper's hard choice between the two candidates: 34.75 / 29.42 / 0.0378
+  clean, 32.19 / 28.05 / 0.0402 moderate, 29.68 / 26.46 / 0.0440 high), and a much simpler method. AHD as shipped
+  blends its candidates by their homogeneity ([ahd-demosaic](ahd-demosaic.md)) and is now above Ppg at every noise
+  level, with the lowest colour error of all on high-noise tiles.
 * Rcd matches edge-aware's PSNR on clean tiles, has the better edge PSNR and the lower colour error there, and
   is a pure interpolation. Edge-aware is ahead on noisy tiles because it smooths them (`NoiseReduction`), which
   the others do not.
 * None of them replaces edge-aware as the choice for the smallest error on noisy files.
 
-Cost, user CPU time per iteration on one thread (`flashraw benchmark`, 18 MP file, minimum of three runs). The
-machine was heavily loaded by other jobs at the time, which inflates every figure about twofold, so read the
-ratios, not the milliseconds: bilinear 367, **Ppg 647**, **Rcd 706**, AHD 836, edge-aware 1222. Ppg and Rcd use
-plain scalar loops; they have not been vectorised like the AHD and edge-aware kernels, so there is room left.
+Implementation: green and the diagonal colour differences are computed for every pixel of a row in branch-free loops
+(the measured samples are put back afterwards), so the loops vectorise; the halo is the real support, 4 samples.
+Develop time of the post-process stage (demosaic, white balance, colour matrix, 16-bit sRGB encoding) of an 18 MP
+Bayer file, best of 3: see the speed tables in [benchmarks](../benchmarks.md). Against bilinear, Ppg adds about 3 %
+and Rcd about 12 % on one thread.
 
 Experiments that were run and not kept:
 
