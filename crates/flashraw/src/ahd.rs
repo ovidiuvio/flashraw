@@ -170,7 +170,8 @@ impl Plan {
         }
 
         // 1. Green along rows (H) and columns (V), computed for every sample and replaced by the
-        //    sample itself where it is green (branch-free so the loop vectorises).
+        //    sample itself where it is green (branch-free so the loop vectorises; `max`/`min`
+        //    rather than `clamp`, whose bounds check would keep it scalar).
         for i in 2..er - 2 {
             let n = ec - 4;
             let base = i * ec + 2;
@@ -184,9 +185,9 @@ impl Plan {
             let (gh, gv) = (&mut gh[base..base + n], &mut gv[base..base + n]);
             for x in 0..n {
                 let h =
-                    ((l[x] + r[x]) * 0.5 + (2.0 * c[x] - l2[x] - r2[x]) * 0.25).clamp(l[x].min(r[x]), l[x].max(r[x]));
+                    ((l[x] + r[x]) * 0.5 + (2.0 * c[x] - l2[x] - r2[x]) * 0.25).max(l[x].min(r[x])).min(l[x].max(r[x]));
                 let v =
-                    ((u[x] + d[x]) * 0.5 + (2.0 * c[x] - u2[x] - d2[x]) * 0.25).clamp(u[x].min(d[x]), u[x].max(d[x]));
+                    ((u[x] + d[x]) * 0.5 + (2.0 * c[x] - u2[x] - d2[x]) * 0.25).max(u[x].min(d[x])).min(u[x].max(d[x]));
                 gh[x] = if gm[x] != 0.0 { c[x] } else { h };
                 gv[x] = if gm[x] != 0.0 { c[x] } else { v };
             }
