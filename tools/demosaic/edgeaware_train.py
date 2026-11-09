@@ -26,6 +26,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view as swv
 
 K, D, EPS = 7, 4, 1e-3
+SR = 3     # support radius of the filters (3 = the full 7x7; 2 trains 5x5 filters inside the 7x7 layout, the outer taps zero)
 GW = 0.0   # least squares row weight (green of the truth)^-GW; 0.58 weighs errors as the sRGB encoding does
 # Sensor noise simulated on the training mosaics: variance = a * value + b (white balanced
 # linear units), clean images plus two noise levels, so that the filters also smooth chroma noise.
@@ -90,9 +91,10 @@ def noisy(m, level, seed):
 def fit(images, pat, featfn, nd, ridge=1e-4, noises=((0.0, 0.0),)):
     """Ridge least squares for all filters of every CFA position, with the weights fixed.
     Every filter sums to one (a flat field stays flat): the centre tap is eliminated."""
-    P = pat.shape[0]; r = K // 2; npos = P * P; nt = K * K - 1; nc = nd * nt
+    P = pat.shape[0]; r = K // 2; npos = P * P
     centre = r * K + r
-    others = [t for t in range(K * K) if t != centre]
+    others = [t for t in range(K * K) if t != centre and max(abs(t // K - r), abs(t % K - r)) <= SR]
+    nt = len(others); nc = nd * nt
     XtX = np.zeros((npos, nc, nc)); Xty = np.zeros((npos, 3, nc))
     for n_img, (gt, level) in enumerate((g, l) for g in images for l in noises):
         m, cm = mosaic(gt, pat)
@@ -244,7 +246,7 @@ def synth(seed, S=384, ss=4):
 
 def cmd_gt(a):
     os.makedirs(a.out, exist_ok=True)
-    exts = ('.cr2', '.cr3', '.nef', '.arw', '.rw2', '.dng', '.orf', '.pef')
+    exts = ('.cr2', '.cr3', '.nef', '.arw', '.rw2', '.dng', '.orf', '.pef', '.raf')
     files = sorted(p for p in glob.glob(a.corpus + '/**/*', recursive=True) if p.lower().endswith(exts))
     rng = np.random.default_rng(1); S = 384
     tmp = os.path.join(a.out, 'tmp.ppm')
@@ -296,9 +298,13 @@ def psnr(a, b, edge=False):
     return -10 * np.log10(e.mean() + 1e-12)
 
 def cmd_train(a):
-    imgs = load(a.gt, 'all')
+    global SR
+    SR = a.support
+    imgs = load(a.gt, a.split)
     os.makedirs(a.out, exist_ok=True)
     for name, pat in (('bayer', BAYER), ('xtrans', XTRANS)):
+        if a.cfa != 'both' and a.cfa != name:
+            continue
         iso, dirc, _ = train_pattern(imgs, pat)
         open(f'{a.out}/{name}.bin', 'wb').write(blob(pat, iso, dirc))
         print('wrote', name, flush=True)
@@ -321,6 +327,9 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     g = sub.add_parser('gt'); g.add_argument('--corpus', required=True); g.add_argument('--flashraw', required=True); g.add_argument('--out', required=True)
     t = sub.add_parser('train'); t.add_argument('--gt', required=True); t.add_argument('--out', required=True)
+    t.add_argument('--support', type=int, default=3, help='filter radius: 3 = 7x7 (default), 2 = 5x5 inside the 7x7 tables')
+    t.add_argument('--split', default='all', choices=['all', 'train'], help="'train' leaves out every fifth source file (the test split)")
+    t.add_argument('--cfa', default='both', choices=['both', 'bayer', 'xtrans'])
     e = sub.add_parser('eval'); e.add_argument('--gt', required=True)
     a = ap.parse_args()
     {'gt': cmd_gt, 'train': cmd_train, 'eval': cmd_eval}[a.cmd](a)
