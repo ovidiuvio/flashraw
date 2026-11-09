@@ -52,6 +52,9 @@ def chroma_err(o, g):
 tiles = T.load(A.gt, 'test')
 nreal = len(tiles) - 12
 res = []
+if A.only and os.path.exists(OUT):
+    # Merge: keep the earlier run's rows of the methods not re-run.
+    res = [r for r in json.load(open(OUT)) if A.only not in r['method']]
 os.makedirs(WORK, exist_ok=True)
 for ti, g0 in enumerate(tiles):
     kind = 'photo' if ti < nreal else 'synthetic'
