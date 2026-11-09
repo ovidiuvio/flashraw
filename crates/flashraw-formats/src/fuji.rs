@@ -970,18 +970,32 @@ fn unpack_rows(
         par::memory_bound_workers(),
         ctx.parallel,
         |first, chunk| {
-            let mut tmp = vec![0u16; w];
+            let y0 = rect.y as usize + first;
+            // Fast path: full-width contiguous 16-bit rows unpack in a single bulk pass.
+            if bits == 16 && x0 == 0 && rw == w && row_bytes == w * 2 {
+                if let Some(bytes) = src.get(y0 * row_bytes..).and_then(|s| s.get(..chunk.len() * 2)) {
+                    packed::unpack_row(bytes, chunk, 16, order, simd);
+                    return;
+                }
+            }
+            let mut tmp = Vec::new();
             for (i, row) in chunk.chunks_mut(rw).enumerate() {
-                let y = rect.y as usize + first + i;
+                let y = y0 + i;
                 let s = src.get(y * row_bytes..).unwrap_or(&[]);
                 if s.len() >= need {
                     if x0 == 0 && rw == w {
                         packed::unpack_row(&s[..need], row, bits, order, simd);
                     } else {
+                        if tmp.is_empty() {
+                            tmp.resize(w, 0);
+                        }
                         packed::unpack_row(&s[..need], &mut tmp, bits, order, simd);
                         row.copy_from_slice(&tmp[x0..x0 + rw]);
                     }
                 } else {
+                    if tmp.is_empty() {
+                        tmp.resize(w, 0);
+                    }
                     let n = packed::unpack_row_partial(s, &mut tmp, bits, order, simd);
                     let keep = n.saturating_sub(x0).min(rw);
                     row[..keep].copy_from_slice(&tmp[x0..x0 + keep]);
