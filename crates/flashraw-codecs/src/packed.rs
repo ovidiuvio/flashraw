@@ -86,8 +86,10 @@ pub fn unpack_row(src: &[u8], dst: &mut [u16], bits: u32, order: PackOrder, simd
         (8, PackOrder::MsbBytes | PackOrder::LsbBytes) => unpack_u8(src, dst),
         (12, PackOrder::MsbBytes) => unpack12_msb(src, dst, simd),
         (12, PackOrder::LsbBytes) => unpack12_lsb(src, dst, simd),
+        (12, PackOrder::Msb32) => unpack12_msb32(src, dst, simd),
         (14, PackOrder::MsbBytes) => unpack14_msb(src, dst),
         (14, PackOrder::LsbBytes) => unpack14_lsb(src, dst),
+        (14, PackOrder::Msb32) => unpack14_msb32(src, dst),
         (10, PackOrder::MsbBytes) => unpack10_msb(src, dst),
         (10, PackOrder::LsbBytes) => unpack10_lsb(src, dst),
         _ => unpack_row_scalar(src, dst, bits, order),
@@ -175,7 +177,7 @@ fn tail(src: &[u8], dst: &mut [u16], done: usize, bits: u32, order: PackOrder) {
 fn unpack12_msb(src: &[u8], dst: &mut [u16], simd: bool) {
     let mut done = 0;
     if simd {
-        done = simd12::unpack(src, dst, true);
+        done = simd12::unpack(src, dst, &simd12::SHUF_MSB, true);
     }
     let groups = ((dst.len() - done) / 2).min(src.len().saturating_sub(done / 2 * 3) / 3);
     for g in 0..groups {
@@ -190,7 +192,7 @@ fn unpack12_msb(src: &[u8], dst: &mut [u16], simd: bool) {
 fn unpack12_lsb(src: &[u8], dst: &mut [u16], simd: bool) {
     let mut done = 0;
     if simd {
-        done = simd12::unpack(src, dst, false);
+        done = simd12::unpack(src, dst, &simd12::SHUF_LSB, false);
     }
     let groups = ((dst.len() - done) / 2).min(src.len().saturating_sub(done / 2 * 3) / 3);
     for g in 0..groups {
@@ -200,6 +202,58 @@ fn unpack12_lsb(src: &[u8], dst: &mut [u16], simd: bool) {
         dst[done + 2 * g + 1] = (b1 >> 4) | (b2 << 4);
     }
     tail(src, dst, done + groups * 2, 12, PackOrder::LsbBytes);
+}
+
+fn unpack12_msb32(src: &[u8], dst: &mut [u16], simd: bool) {
+    let mut done = 0;
+    if simd {
+        done = simd12::unpack(src, dst, &simd12::SHUF_MSB32, true);
+    }
+    // 8 samples per 12 bytes (three 32-bit little-endian words).
+    let groups = ((dst.len() - done) / 8).min(src.len().saturating_sub(done / 2 * 3) / 12);
+    for g in 0..groups {
+        let s = &src[done / 2 * 3 + g * 12..][..12];
+        let w0 = u32::from_le_bytes(s[0..4].try_into().unwrap());
+        let w1 = u32::from_le_bytes(s[4..8].try_into().unwrap());
+        let w2 = u32::from_le_bytes(s[8..12].try_into().unwrap());
+        let d = &mut dst[done + g * 8..][..8];
+        d[0] = (w0 >> 20) as u16;
+        d[1] = ((w0 >> 8) & 0xFFF) as u16;
+        d[2] = (((w0 & 0xFF) << 4) | (w1 >> 28)) as u16;
+        d[3] = ((w1 >> 16) & 0xFFF) as u16;
+        d[4] = ((w1 >> 4) & 0xFFF) as u16;
+        d[5] = (((w1 & 0xF) << 8) | (w2 >> 24)) as u16;
+        d[6] = ((w2 >> 12) & 0xFFF) as u16;
+        d[7] = (w2 & 0xFFF) as u16;
+    }
+    tail(src, dst, done + groups * 8, 12, PackOrder::Msb32);
+}
+
+fn unpack14_msb32(src: &[u8], dst: &mut [u16]) {
+    // 16 samples of 14 bits per 28 bytes (seven 32-bit little-endian words).
+    let groups = (dst.len() / 16).min(src.len() / 28);
+    for g in 0..groups {
+        let s = &src[g * 28..][..28];
+        let w0 = u32::from_le_bytes(s[0..4].try_into().unwrap()) as u64;
+        let w1 = u32::from_le_bytes(s[4..8].try_into().unwrap()) as u64;
+        let w2 = u32::from_le_bytes(s[8..12].try_into().unwrap()) as u64;
+        let w3 = u32::from_le_bytes(s[12..16].try_into().unwrap()) as u64;
+        let w4 = u32::from_le_bytes(s[16..20].try_into().unwrap()) as u64;
+        let w5 = u32::from_le_bytes(s[20..24].try_into().unwrap()) as u64;
+        let w6 = u32::from_le_bytes(s[24..28].try_into().unwrap()) as u64;
+        let b0 = (w0 << 24) | (w1 >> 8);
+        let b1 = ((w1 & 0xFF) << 48) | (w2 << 16) | (w3 >> 16);
+        let b2 = ((w3 & 0xFFFF) << 40) | (w4 << 8) | (w5 >> 24);
+        let b3 = ((w5 & 0xFF_FFFF) << 32) | w6;
+        let d = &mut dst[g * 16..][..16];
+        for (i, b) in [b0, b1, b2, b3].into_iter().enumerate() {
+            d[i * 4] = ((b >> 42) & 0x3FFF) as u16;
+            d[i * 4 + 1] = ((b >> 28) & 0x3FFF) as u16;
+            d[i * 4 + 2] = ((b >> 14) & 0x3FFF) as u16;
+            d[i * 4 + 3] = (b & 0x3FFF) as u16;
+        }
+    }
+    tail(src, dst, groups * 16, 14, PackOrder::Msb32);
 }
 
 macro_rules! word_unpack {
@@ -237,28 +291,30 @@ mod simd12 {
     pub(super) const SHUF_MSB: [u8; 16] = [1, 0, 2, 1, 4, 3, 5, 4, 7, 6, 8, 7, 10, 9, 11, 10];
     /// Shuffle for LSB packing: lane = bytes (lo, hi) in natural order.
     pub(super) const SHUF_LSB: [u8; 16] = [0, 1, 1, 2, 3, 4, 4, 5, 6, 7, 7, 8, 9, 10, 10, 11];
+    /// Shuffle for MSB packing inside 32-bit little-endian words (`idx ^ 3` of `SHUF_MSB`).
+    pub(super) const SHUF_MSB32: [u8; 16] = [2, 3, 1, 2, 7, 0, 6, 7, 4, 5, 11, 4, 9, 10, 8, 9];
 
     /// Returns the number of samples written (a multiple of 8).
     #[allow(unreachable_code)]
-    pub fn unpack(src: &[u8], dst: &mut [u16], msb: bool) -> usize {
+    pub fn unpack(src: &[u8], dst: &mut [u16], shuf: &[u8; 16], msb: bool) -> usize {
         #[cfg(target_arch = "x86_64")]
         {
             if std::arch::is_x86_feature_detected!("sse4.1") && std::arch::is_x86_feature_detected!("ssse3") {
                 // SAFETY: the required CPU features were detected at runtime.
-                return unsafe { x86::unpack(src, dst, msb) };
+                return unsafe { x86::unpack(src, dst, shuf, msb) };
             }
             return 0;
         }
         #[cfg(target_arch = "aarch64")]
         {
             // SAFETY: NEON is mandatory on aarch64.
-            return unsafe { neon::unpack(src, dst, msb) };
+            return unsafe { neon::unpack(src, dst, shuf, msb) };
         }
         #[cfg(all(target_arch = "wasm32", target_feature = "simd128"))]
         {
-            return wasm::unpack(src, dst, msb);
+            return wasm::unpack(src, dst, shuf, msb);
         }
-        let _ = (src, dst, msb);
+        let _ = (src, dst, shuf, msb);
         0
     }
 
@@ -275,9 +331,8 @@ mod simd12 {
         /// # Safety
         /// Caller must ensure SSSE3 and SSE4.1 are available.
         #[target_feature(enable = "ssse3,sse4.1")]
-        pub unsafe fn unpack(src: &[u8], dst: &mut [u16], msb: bool) -> usize {
+        pub unsafe fn unpack(src: &[u8], dst: &mut [u16], shuf: &[u8; 16], msb: bool) -> usize {
             let n = super::groups(src, dst);
-            let shuf = if msb { super::SHUF_MSB } else { super::SHUF_LSB };
             // SAFETY: (whole block) `groups` guarantees for each g < n that bytes
             // [12g, 12g+16) are in `src` and samples [8g, 8g+8) are in `dst`;
             // unaligned load/store intrinsics are used.
@@ -309,9 +364,8 @@ mod simd12 {
         /// # Safety
         /// NEON must be available (always true on aarch64).
         #[target_feature(enable = "neon")]
-        pub unsafe fn unpack(src: &[u8], dst: &mut [u16], msb: bool) -> usize {
+        pub unsafe fn unpack(src: &[u8], dst: &mut [u16], shuf: &[u8; 16], msb: bool) -> usize {
             let n = super::groups(src, dst);
-            let shuf = if msb { super::SHUF_MSB } else { super::SHUF_LSB };
             let even_sel: [u16; 8] = if msb {
                 [0xFFFF, 0, 0xFFFF, 0, 0xFFFF, 0, 0xFFFF, 0]
             } else {
@@ -339,9 +393,8 @@ mod simd12 {
     mod wasm {
         use core::arch::wasm32::*;
 
-        pub fn unpack(src: &[u8], dst: &mut [u16], msb: bool) -> usize {
+        pub fn unpack(src: &[u8], dst: &mut [u16], shuf: &[u8; 16], msb: bool) -> usize {
             let n = super::groups(src, dst);
-            let shuf = if msb { super::SHUF_MSB } else { super::SHUF_LSB };
             let sel = if msb {
                 u16x8(0xFFFF, 0, 0xFFFF, 0, 0xFFFF, 0, 0xFFFF, 0)
             } else {
@@ -422,7 +475,7 @@ mod tests {
         for bits in [10u32, 12, 14, 16] {
             for width in [8usize, 16, 24, 32, 40, 48] {
                 let src = pseudo(width * bits as usize / 8, 9);
-                for order in [PackOrder::MsbBytes, PackOrder::LsbBytes] {
+                for order in [PackOrder::MsbBytes, PackOrder::LsbBytes, PackOrder::Msb32] {
                     let mut a = vec![0u16; width];
                     let mut b = vec![0u16; width];
                     unpack_row_scalar(&src, &mut a, bits, order);
