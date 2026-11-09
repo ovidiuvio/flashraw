@@ -26,7 +26,7 @@ use flashraw_core::CfaPattern;
 
 /// Mosaic samples needed around a pixel (even, so the colour of a pixel follows from the parity of
 /// its frame coordinates).
-pub(crate) const HALO: usize = 8;
+pub(crate) const HALO: usize = 4;
 /// Output rows per band.
 pub(crate) const BAND_ROWS: usize = 64;
 
@@ -129,6 +129,12 @@ struct Band<'a> {
     px: usize,
 }
 
+/// The `bw` samples of band row `i` of `p`.
+#[inline(always)]
+fn row(p: &[f32], bw: usize, i: usize) -> &[f32] {
+    &p[i * bw..(i + 1) * bw]
+}
+
 impl Band<'_> {
     /// Colour of the sample at band row `i`, column `j`.
     #[inline(always)]
@@ -136,130 +142,177 @@ impl Band<'_> {
         self.col[((i + self.py) & 1) * 2 + ((j + self.px) & 1)]
     }
 
-    /// First column `>= 2` of row `i` whose sample is not green (they alternate with greens).
+    /// Put the measured greens of row `i`, columns `from..to`, back into `g` (the row loops
+    /// estimate every pixel; greens alternate with the other colours).
     #[inline(always)]
-    fn first_non_green(&self, i: usize) -> usize {
-        if self.colour(i, 2) != 1 { 2 } else { 3 }
+    fn keep_greens(&self, g: &mut [f32], i: usize, from: usize, to: usize) {
+        let bw = self.bw;
+        let mut j = if self.colour(i, from) == 1 { from } else { from + 1 };
+        while j < to {
+            g[i * bw + j] = self.m[i * bw + j];
+            j += 2;
+        }
     }
 
     /// The green plane: measured at green samples, estimated elsewhere, valid for rows and
     /// columns `3..` from the edges (the support of the estimates is 3 samples).
     fn green(&self, method: Method) -> Vec<f32> {
-        let (er, bw, m) = (self.er, self.bw, self.m);
-        let mut g = m.to_vec();
+        let mut g = self.m.to_vec();
         match method {
-            Method::Ppg => {
-                for i in 2..er - 2 {
-                    let mut j = self.first_non_green(i);
-                    while j < bw - 2 {
-                        let k = i * bw + j;
-                        let c = m[k];
-                        let (gn, gs, gw, ge) = (m[k - bw], m[k + bw], m[k - 1], m[k + 1]);
-                        let (n2, s2, w2, e2) = (m[k - 2 * bw], m[k + 2 * bw], m[k - 2], m[k + 2]);
-                        let dv = (gn - gs).abs() + (2.0 * c - n2 - s2).abs();
-                        let dh = (gw - ge).abs() + (2.0 * c - w2 - e2).abs();
-                        let ev = ((gn + gs) * 0.5 + (2.0 * c - n2 - s2) * 0.25).clamp(gn.min(gs), gn.max(gs));
-                        let eh = ((gw + ge) * 0.5 + (2.0 * c - w2 - e2) * 0.25).clamp(gw.min(ge), gw.max(ge));
-                        g[k] = if dv < dh {
-                            ev
-                        } else if dh < dv {
-                            eh
-                        } else {
-                            (ev + eh) * 0.5
-                        };
-                        j += 2;
-                    }
-                }
-            }
+            Method::Ppg => self.green_ppg(&mut g),
             Method::Rcd => self.green_ratio(&mut g),
         }
         g
     }
 
-    /// Green by ratio-corrected directional estimates (module docs).
+    /// Green by the directional estimate of smaller gradient (module docs). Every pixel of a row
+    /// is estimated in one branch-free loop, then the measured greens are put back.
+    fn green_ppg(&self, g: &mut [f32]) {
+        let (er, bw, m) = (self.er, self.bw, self.m);
+        let n = bw - 4;
+        for i in 2..er - 2 {
+            let c = row(m, bw, i);
+            let (n1, s1) = (&row(m, bw, i - 1)[2..2 + n], &row(m, bw, i + 1)[2..2 + n]);
+            let (n2, s2) = (&row(m, bw, i - 2)[2..2 + n], &row(m, bw, i + 2)[2..2 + n]);
+            let o = &mut g[i * bw + 2..i * bw + 2 + n];
+            for t in 0..n {
+                let (cc, gw, ge, w2, e2) = (c[t + 2], c[t + 1], c[t + 3], c[t], c[t + 4]);
+                let (gn, gs) = (n1[t], s1[t]);
+                let lv = 2.0 * cc - n2[t] - s2[t];
+                let lh = 2.0 * cc - w2 - e2;
+                let dv = (gn - gs).abs() + lv.abs();
+                let dh = (gw - ge).abs() + lh.abs();
+                let ev = ((gn + gs) * 0.5 + lv * 0.25).max(gn.min(gs)).min(gn.max(gs));
+                let eh = ((gw + ge) * 0.5 + lh * 0.25).max(gw.min(ge)).min(gw.max(ge));
+                let both = (ev + eh) * 0.5;
+                o[t] = if dv < dh {
+                    ev
+                } else if dh < dv {
+                    eh
+                } else {
+                    both
+                };
+            }
+            self.keep_greens(g, i, 2, bw - 2);
+        }
+    }
+
+    /// Green by ratio-corrected directional estimates (module docs), in branch-free row loops.
     fn green_ratio(&self, g: &mut [f32]) {
         const EPS: f32 = 1e-4;
         let (er, bw, m) = (self.er, self.bw, self.m);
         // Low pass of the mosaic, `[1 2 1; 2 4 2; 1 2 1] / 16`, for rows and columns 1.. from the edges.
         let mut l = vec![0f32; er * bw];
+        let n = bw - 2;
         for i in 1..er - 1 {
-            for j in 1..bw - 1 {
-                let k = i * bw + j;
-                l[k] = (4.0 * m[k]
-                    + 2.0 * (m[k - 1] + m[k + 1] + m[k - bw] + m[k + bw])
-                    + (m[k - bw - 1] + m[k - bw + 1] + m[k + bw - 1] + m[k + bw + 1]))
+            let (a, b, c) = (row(m, bw, i - 1), row(m, bw, i), row(m, bw, i + 1));
+            let o = &mut l[i * bw + 1..i * bw + 1 + n];
+            for t in 0..n {
+                o[t] = (4.0 * b[t + 1]
+                    + 2.0 * (b[t] + b[t + 2] + a[t + 1] + c[t + 1])
+                    + (a[t] + a[t + 2] + c[t] + c[t + 2]))
                     * (1.0 / 16.0);
             }
         }
+        let n = bw - 6;
         for i in 3..er - 3 {
-            let mut j = if self.colour(i, 3) != 1 { 3 } else { 4 };
-            while j < bw - 3 {
-                let k = i * bw + j;
-                let (lc, ln, ls, lw, le) = (l[k], l[k - bw], l[k + bw], l[k - 1], l[k + 1]);
-                let (ln2, ls2, lw2, le2) = (l[k - 2 * bw], l[k + 2 * bw], l[k - 2], l[k + 2]);
+            let lc = row(&l, bw, i);
+            let (ln, ls) = (&row(&l, bw, i - 1)[3..3 + n], &row(&l, bw, i + 1)[3..3 + n]);
+            let (ln2, ls2) = (&row(&l, bw, i - 2)[3..3 + n], &row(&l, bw, i + 2)[3..3 + n]);
+            let mc = row(m, bw, i);
+            let (mn, ms) = (&row(m, bw, i - 1)[3..3 + n], &row(m, bw, i + 1)[3..3 + n]);
+            let o = &mut g[i * bw + 3..i * bw + 3 + n];
+            for t in 0..n {
+                let (c, lw, le, lw2, le2) = (lc[t + 3], lc[t + 2], lc[t + 4], lc[t + 1], lc[t + 5]);
+                let (gn, gs, gw, ge) = (mn[t], ms[t], mc[t + 2], mc[t + 4]);
                 // The ratio-corrected estimate from each neighbouring green: the intensity at the
                 // neighbour is taken as the mean of the low pass at the centre and two away.
-                let est = |gv: f32, l2: f32| gv * 2.0 * lc / (EPS + lc + l2);
-                let (en, es, ew, ee) =
-                    (est(m[k - bw], ln2), est(m[k + bw], ls2), est(m[k - 1], lw2), est(m[k + 1], le2));
-                let wgt = |a: f32, b: f32| {
-                    let d = EPS + (a - b).abs();
-                    1.0 / (d * d)
-                };
+                let en = gn * 2.0 * c / (EPS + c + ln2[t]);
+                let es = gs * 2.0 * c / (EPS + c + ls2[t]);
+                let ew = gw * 2.0 * c / (EPS + c + lw2);
+                let ee = ge * 2.0 * c / (EPS + c + le2);
                 // Weights from the low pass: the closer a green's intensity is to the centre's,
                 // the more it counts.
-                let (wn, ws, ww, we) = (wgt(ln, lc), wgt(ls, lc), wgt(lw, lc), wgt(le, lc));
+                let wgt = |a: f32| {
+                    let d = EPS + (a - c).abs();
+                    1.0 / (d * d)
+                };
+                let (wn, ws, ww, we) = (wgt(ln[t]), wgt(ls[t]), wgt(lw), wgt(le));
                 let gv = (wn * en + ws * es) / (wn + ws);
                 let gh = (ww * ew + we * ee) / (ww + we);
                 // Trust the direction across which the image varies less.
-                let ev = (ln - ls).abs() + (l[k - 2 * bw] - lc).abs() + (l[k + 2 * bw] - lc).abs();
-                let eh = (lw - le).abs() + (l[k - 2] - lc).abs() + (l[k + 2] - lc).abs();
+                let ev = (ln[t] - ls[t]).abs() + (ln2[t] - c).abs() + (ls2[t] - c).abs();
+                let eh = (lw - le).abs() + (lw2 - c).abs() + (le2 - c).abs();
                 let a = (eh * eh + EPS) / (ev * ev + eh * eh + 2.0 * EPS);
-                let est_g = a * gv + (1.0 - a) * gh;
-                let (lo, hi) = (
-                    m[k - bw].min(m[k + bw]).min(m[k - 1]).min(m[k + 1]),
-                    m[k - bw].max(m[k + bw]).max(m[k - 1]).max(m[k + 1]),
-                );
-                g[k] = est_g.clamp(lo, hi);
-                j += 2;
+                let est = a * gv + (1.0 - a) * gh;
+                let lo = gn.min(gs).min(gw).min(ge);
+                let hi = gn.max(gs).max(gw).max(ge);
+                o[t] = est.max(lo).min(hi);
             }
+            self.keep_greens(g, i, 3, bw - 3);
         }
     }
 
-    /// Red and blue from colour differences, written to `out` for the `nr` x `nc` core.
+    /// Red and blue from colour differences, written to `out` for the `nr` x `nc` core. The
+    /// row and column means and the diagonal estimate are computed for every pixel of a row in
+    /// branch-free loops; each pixel then takes the ones its colour needs.
     fn diagonal(&self, method: Method, g: &[f32], out: &mut [[f32; 3]], nr: usize, nc: usize) {
         const EPS: f32 = 1e-4;
         let (bw, m) = (self.bw, self.m);
+        let e: Vec<f32> = m.iter().zip(g).map(|(a, b)| a - b).collect();
+        let (mut hm, mut vm, mut dg) = (vec![0f32; nc], vec![0f32; nc], vec![0f32; nc]);
+        let j0 = HALO;
         for oi in 0..nr {
             let i = oi + HALO;
-            for oj in 0..nc {
-                let j = oj + HALO;
-                let k = i * bw + j;
-                let c = self.colour(i, j);
-                let e = |q: usize| m[q] - g[q];
-                let rgb = if c == 1 {
-                    // Green sample: the colour of its row neighbours from the row, the other
-                    // from the column.
-                    let h = 0.5 * (e(k - 1) + e(k + 1));
-                    let v = 0.5 * (e(k - bw) + e(k + bw));
-                    if self.colour(i, j + 1) == 0 { [g[k] + h, g[k], g[k] + v] } else { [g[k] + v, g[k], g[k] + h] }
-                } else {
-                    let (ne, nw, se, sw) = (k - bw + 1, k - bw - 1, k + bw + 1, k + bw - 1);
-                    let d1 = (m[ne] - m[sw]).abs() + (2.0 * g[k] - g[ne] - g[sw]).abs();
-                    let d2 = (m[nw] - m[se]).abs() + (2.0 * g[k] - g[nw] - g[se]).abs();
-                    let other = if method == Method::Rcd {
-                        let (w1, w2) = (1.0 / ((EPS + d1) * (EPS + d1)), 1.0 / ((EPS + d2) * (EPS + d2)));
-                        g[k] + (w1 * 0.5 * (e(ne) + e(sw)) + w2 * 0.5 * (e(nw) + e(se))) / (w1 + w2)
-                    } else if d1 < d2 {
-                        g[k] + 0.5 * (e(ne) + e(sw))
-                    } else if d2 < d1 {
-                        g[k] + 0.5 * (e(nw) + e(se))
-                    } else {
-                        g[k] + 0.25 * (e(ne) + e(sw) + e(nw) + e(se))
+            let (en, ec, es) = (&row(&e, bw, i - 1)[j0 - 1..], row(&e, bw, i), &row(&e, bw, i + 1)[j0 - 1..]);
+            let (mn, ms) = (&row(m, bw, i - 1)[j0 - 1..], &row(m, bw, i + 1)[j0 - 1..]);
+            let (gn, gc, gs) =
+                (&row(g, bw, i - 1)[j0 - 1..], &row(g, bw, i)[j0..j0 + nc], &row(g, bw, i + 1)[j0 - 1..]);
+            let (en, es, mn, ms, gn, gs) =
+                (&en[..nc + 2], &es[..nc + 2], &mn[..nc + 2], &ms[..nc + 2], &gn[..nc + 2], &gs[..nc + 2]);
+            let ec = &ec[j0 - 1..j0 + nc + 1];
+            for t in 0..nc {
+                hm[t] = 0.5 * (ec[t] + ec[t + 2]);
+                vm[t] = 0.5 * (en[t + 1] + es[t + 1]);
+                // ne = (i - 1, j + 1), sw = (i + 1, j - 1), nw = (i - 1, j - 1), se = (i + 1, j + 1).
+                let d1 = (mn[t + 2] - ms[t]).abs() + (2.0 * gc[t] - gn[t + 2] - gs[t]).abs();
+                let d2 = (mn[t] - ms[t + 2]).abs() + (2.0 * gc[t] - gn[t] - gs[t + 2]).abs();
+                let (s1, s2) = (en[t + 2] + es[t], en[t] + es[t + 2]);
+                dg[t] = gc[t]
+                    + match method {
+                        Method::Rcd => {
+                            let (w1, w2) = (1.0 / ((EPS + d1) * (EPS + d1)), 1.0 / ((EPS + d2) * (EPS + d2)));
+                            (w1 * 0.5 * s1 + w2 * 0.5 * s2) / (w1 + w2)
+                        }
+                        Method::Ppg => {
+                            let both = 0.25 * (en[t + 2] + es[t] + en[t] + es[t + 2]);
+                            if d1 < d2 {
+                                0.5 * s1
+                            } else if d2 < d1 {
+                                0.5 * s2
+                            } else {
+                                both
+                            }
+                        }
                     };
-                    if c == 0 { [m[k], g[k], other] } else { [other, g[k], m[k]] }
-                };
-                out[oi * nc + oj] = rgb;
+            }
+            let mc = &row(m, bw, i)[j0..j0 + nc];
+            let o = &mut out[oi * nc..(oi + 1) * nc];
+            // Green samples: the colour of their row neighbours from the row, the other from the column.
+            let tg = if self.colour(i, j0) == 1 { 0 } else { 1 };
+            let row_is_red = self.colour(i, j0 + tg + 1) == 0;
+            let mut t = tg;
+            while t < nc {
+                let gk = gc[t];
+                o[t] = if row_is_red { [gk + hm[t], gk, gk + vm[t]] } else { [gk + vm[t], gk, gk + hm[t]] };
+                t += 2;
+            }
+            // Red and blue samples: the measured value, the green, and the diagonal estimate.
+            let red = self.colour(i, j0 + 1 - tg) == 0;
+            let mut t = 1 - tg;
+            while t < nc {
+                o[t] = if red { [mc[t], gc[t], dg[t]] } else { [dg[t], gc[t], mc[t]] };
+                t += 2;
             }
         }
     }
