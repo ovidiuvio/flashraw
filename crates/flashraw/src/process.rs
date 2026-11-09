@@ -850,22 +850,25 @@ impl Kernel<'_> {
         let c = &self.calibs[0];
         let base = ((y + oy) % c.ph) * c.pw;
         let period = c.pw;
-        let blk: Vec<f32> = (0..period).map(|i| c.black[base + (i + ox) % period]).collect();
-        let scl: Vec<f32> = (0..period).map(|i| c.scale[base + (i + ox) % period]).collect();
+        // The period repeated to at least 32 samples, so the inner loop is long enough to vectorise
+        // (periods are 1 or 2 for most sensors).
+        let len = period * 32usize.div_ceil(period);
+        let blk: Vec<f32> = (0..len).map(|i| c.black[base + (i + ox) % period]).collect();
+        let scl: Vec<f32> = (0..len).map(|i| c.scale[base + (i + ox) % period]).collect();
         match &img.data {
             PixelData::U16(d) => {
                 let row = &d[y * w..(y + 1) * w];
-                for ((oc, rc), _) in out[..w].chunks_mut(period).zip(row.chunks(period)).zip(0..) {
-                    for (k, (o, &v)) in oc.iter_mut().zip(rc).enumerate() {
-                        *o = (v as f32 - blk[k]) * scl[k];
+                for (oc, rc) in out[..w].chunks_mut(len).zip(row.chunks(len)) {
+                    for (((o, &v), &b), &s) in oc.iter_mut().zip(rc).zip(&blk).zip(&scl) {
+                        *o = (v as f32 - b) * s;
                     }
                 }
             }
             PixelData::F32(d) => {
                 let row = &d[y * w..(y + 1) * w];
-                for (oc, rc) in out[..w].chunks_mut(period).zip(row.chunks(period)) {
-                    for (k, (o, &v)) in oc.iter_mut().zip(rc).enumerate() {
-                        *o = (v - blk[k]) * scl[k];
+                for (oc, rc) in out[..w].chunks_mut(len).zip(row.chunks(len)) {
+                    for (((o, &v), &b), &s) in oc.iter_mut().zip(rc).zip(&blk).zip(&scl) {
+                        *o = (v - b) * s;
                     }
                 }
             }
@@ -1550,8 +1553,14 @@ where
         let mut put = |i: usize, rgb: &[[f32; 3]]| {
             if !swap {
                 let row = tile.row(i);
-                for (ox, px) in row.chunks_exact_mut(N).enumerate().take(w) {
-                    px.copy_from_slice(&enc(rgb[if rev_x { w - 1 - ox } else { ox }]));
+                if rev_x {
+                    for (px, p) in row.chunks_exact_mut(N).zip(rgb[..w].iter().rev()) {
+                        px.copy_from_slice(&enc(*p));
+                    }
+                } else {
+                    for (px, p) in row.chunks_exact_mut(N).zip(&rgb[..w]) {
+                        px.copy_from_slice(&enc(*p));
+                    }
                 }
             } else {
                 for oy in 0..th_ {
@@ -1626,7 +1635,8 @@ pub fn srgb16(v: f32, lut: &[f32]) -> u16 {
     let x = v.clamp(0.0, 1.0) * SRGB16_SEGMENTS as f32;
     let i = (x as usize).min(SRGB16_SEGMENTS - 1);
     let t = x - i as f32;
-    let (a, b) = (lut[i], lut[i + 1]);
+    let ab = &lut[i..i + 2];
+    let (a, b) = (ab[0], ab[1]);
     (a + (b - a) * t + 0.5) as u16
 }
 
