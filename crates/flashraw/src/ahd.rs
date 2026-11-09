@@ -149,82 +149,126 @@ impl Plan {
         }
         // Colour of local (i, j): frame row y0 - HALO + i, column xa - HALO + c0 + j.
         let (py, px) = ((y0 + HALO) & 1, (xa + HALO + c0) & 1); // parity of y0-HALO, xa-HALO+c0 (HALO is even)
-        let colour = |i: usize, j: usize| self.col[((i + py) & 1) * 2 + ((j + px) & 1)] as usize;
-        let at = |i: usize, j: usize| i * ec + j;
-
-        // 1. Green along rows (H) and columns (V).
-        for i in 2..er - 2 {
-            for j in 2..ec - 2 {
-                let k = at(i, j);
-                let c = wk.m[k];
-                if colour(i, j) == 1 {
-                    wk.g[0][k] = c;
-                    wk.g[1][k] = c;
-                    continue;
-                }
-                let (a, b) = (wk.m[k - 1], wk.m[k + 1]);
-                let h = (a + b) * 0.5 + (2.0 * c - wk.m[k - 2] - wk.m[k + 2]) * 0.25;
-                wk.g[0][k] = h.clamp(a.min(b), a.max(b));
-                let (a, b) = (wk.m[k - ec], wk.m[k + ec]);
-                let v = (a + b) * 0.5 + (2.0 * c - wk.m[k - 2 * ec] - wk.m[k + 2 * ec]) * 0.25;
-                wk.g[1][k] = v.clamp(a.min(b), a.max(b));
+        // Masks (1.0 or 0.0) per row kind and column: the sample is green, red, blue, or green
+        // with red neighbours along its row. They let the plane loops pick formulas without
+        // branches.
+        for rk in 0..2 {
+            for j in 0..ec {
+                let c = self.col[rk * 2 + ((j + px) & 1)];
+                let right = self.col[rk * 2 + ((j + 1 + px) & 1)];
+                let f = |b: bool| if b { 1.0 } else { 0.0 };
+                wk.mask[rk][0][j] = f(c == 1);
+                wk.mask[rk][1][j] = f(c == 0);
+                wk.mask[rk][2][j] = f(c == 2);
+                wk.mask[rk][3][j] = f(c == 1 && right == 0);
             }
         }
 
-        // 2. Red and blue by colour differences, then the perceptual coordinates.
+        // 1. Green along rows (H) and columns (V), computed for every sample and replaced by the
+        //    sample itself where it is green (branch-free so the loop vectorises).
+        for i in 2..er - 2 {
+            let n = ec - 4;
+            let base = i * ec + 2;
+            let gm = &wk.mask[(i + py) & 1][0][2..2 + n];
+            let m = &wk.m;
+            let (c, l, r) = (&m[base..base + n], &m[base - 1..base - 1 + n], &m[base + 1..base + 1 + n]);
+            let (l2, r2) = (&m[base - 2..base - 2 + n], &m[base + 2..base + 2 + n]);
+            let (u, d) = (&m[base - ec..base - ec + n], &m[base + ec..base + ec + n]);
+            let (u2, d2) = (&m[base - 2 * ec..base - 2 * ec + n], &m[base + 2 * ec..base + 2 * ec + n]);
+            let [gh, gv] = &mut wk.g;
+            let (gh, gv) = (&mut gh[base..base + n], &mut gv[base..base + n]);
+            for x in 0..n {
+                let h =
+                    ((l[x] + r[x]) * 0.5 + (2.0 * c[x] - l2[x] - r2[x]) * 0.25).clamp(l[x].min(r[x]), l[x].max(r[x]));
+                let v =
+                    ((u[x] + d[x]) * 0.5 + (2.0 * c[x] - u2[x] - d2[x]) * 0.25).clamp(u[x].min(d[x]), u[x].max(d[x]));
+                gh[x] = if gm[x] != 0.0 { c[x] } else { h };
+                gv[x] = if gm[x] != 0.0 { c[x] } else { v };
+            }
+        }
+
+        // 2. Red, green and blue planes by colour differences, then the perceptual coordinates.
+        //    Both the formula for a red or blue sample and the one for a green sample are
+        //    evaluated everywhere and the masks pick the right one.
         for d in 0..2 {
+            for k in 0..er * ec {
+                wk.diff[k] = wk.m[k] - wk.g[d][k];
+            }
             for i in 3..er - 3 {
-                for j in 3..ec - 3 {
-                    let k = at(i, j);
-                    let g = wk.g[d][k];
-                    let diff = |kk: usize| wk.m[kk] - wk.g[d][kk];
-                    let rgb = match colour(i, j) {
-                        0 => {
-                            let b =
-                                g + 0.25 * (diff(k - ec - 1) + diff(k - ec + 1) + diff(k + ec - 1) + diff(k + ec + 1));
-                            [wk.m[k], g, b]
-                        }
-                        2 => {
-                            let r =
-                                g + 0.25 * (diff(k - ec - 1) + diff(k - ec + 1) + diff(k + ec - 1) + diff(k + ec + 1));
-                            [r, g, wk.m[k]]
-                        }
-                        _ => {
-                            // Green: the pixel's row neighbours are of one colour, its column
-                            // neighbours of the other.
-                            let along_row = 0.5 * (diff(k - 1) + diff(k + 1));
-                            let along_col = 0.5 * (diff(k - ec) + diff(k + ec));
-                            if colour(i, j + 1) == 0 {
-                                [g + along_row, g, g + along_col]
-                            } else {
-                                [g + along_col, g, g + along_row]
-                            }
-                        }
+                let n = ec - 6;
+                let base = i * ec + 3;
+                let rk = (i + py) & 1;
+                let [gm, rm, bm, hr] = &wk.mask[rk];
+                let (gm, rm, bm, hr) = (&gm[3..3 + n], &rm[3..3 + n], &bm[3..3 + n], &hr[3..3 + n]);
+                let df = &wk.diff;
+                let (c, g) = (&wk.m[base..base + n], &wk.g[d][base..base + n]);
+                let (ul, ur) = (&df[base - ec - 1..base - ec - 1 + n], &df[base - ec + 1..base - ec + 1 + n]);
+                let (dl, dr) = (&df[base + ec - 1..base + ec - 1 + n], &df[base + ec + 1..base + ec + 1 + n]);
+                let (l, r) = (&df[base - 1..base - 1 + n], &df[base + 1..base + 1 + n]);
+                let (u, dn) = (&df[base - ec..base - ec + n], &df[base + ec..base + ec + n]);
+                let [pr, pg, pb] = &mut wk.rgb[d];
+                let (pr, pg, pb) = (&mut pr[base..base + n], &mut pg[base..base + n], &mut pb[base..base + n]);
+                let [pl, pa, pbb] = &mut wk.lab[d];
+                let (pl, pa, pbb) = (&mut pl[base..base + n], &mut pa[base..base + n], &mut pbb[base..base + n]);
+                for x in 0..n {
+                    let diag = g[x] + 0.25 * (ul[x] + ur[x] + dl[x] + dr[x]);
+                    let row = g[x] + 0.5 * (l[x] + r[x]);
+                    let col = g[x] + 0.5 * (u[x] + dn[x]);
+                    let on_green_r = if hr[x] != 0.0 { row } else { col };
+                    let on_green_b = if hr[x] != 0.0 { col } else { row };
+                    let red = if rm[x] != 0.0 {
+                        c[x]
+                    } else if gm[x] != 0.0 {
+                        on_green_r
+                    } else {
+                        diag
                     };
-                    wk.rgb[d][k] = rgb;
-                    let s = rgb.map(|v| v.max(0.0).sqrt());
-                    wk.lab[d][0][k] = (s[0] + 2.0 * s[1] + s[2]) * 0.25;
-                    wk.lab[d][1][k] = s[0] - s[1];
-                    wk.lab[d][2][k] = s[2] - s[1];
+                    let blue = if bm[x] != 0.0 {
+                        c[x]
+                    } else if gm[x] != 0.0 {
+                        on_green_b
+                    } else {
+                        diag
+                    };
+                    pr[x] = red;
+                    pg[x] = g[x];
+                    pb[x] = blue;
+                    let (sr, sg, sb) = (red.max(0.0).sqrt(), g[x].max(0.0).sqrt(), blue.max(0.0).sqrt());
+                    pl[x] = (sr + 2.0 * sg + sb) * 0.25;
+                    pa[x] = sr - sg;
+                    pbb[x] = sb - sg;
                 }
             }
         }
 
         // 3. Thresholds: the smaller of the largest steps along the row in H and along the
         //    column in V (chroma as a squared distance).
-        let step = |lab: &[Vec<f32>; 3], k: usize, o: usize| {
-            let (l, a, b) = (lab[0][k], lab[1][k], lab[2][k]);
-            let dl = (lab[0][k - o] - l).abs().max((lab[0][k + o] - l).abs());
-            let sq = |kk: usize| (lab[1][kk] - a) * (lab[1][kk] - a) + (lab[2][kk] - b) * (lab[2][kk] - b);
-            (dl, sq(k - o).max(sq(k + o)))
-        };
         for i in 4..er - 4 {
-            for j in 4..ec - 4 {
-                let k = at(i, j);
-                let (lh, ch) = step(&wk.lab[0], k, 1);
-                let (lv, cv) = step(&wk.lab[1], k, ec);
-                wk.eps[0][k] = lh.min(lv);
-                wk.eps[1][k] = ch.min(cv);
+            let n = ec - 8;
+            let base = i * ec + 4;
+            // Steps of candidate d to the neighbours at offset `o` (1 for H, ec for V).
+            let tmp = &mut wk.tmp;
+            for d in 0..2 {
+                let o = if d == 0 { 1 } else { ec };
+                let [pl, pa, pb] = &wk.lab[d];
+                let (l, a, b) = (&pl[base..base + n], &pa[base..base + n], &pb[base..base + n]);
+                let (l1, l2) = (&pl[base - o..base - o + n], &pl[base + o..base + o + n]);
+                let (a1, a2) = (&pa[base - o..base - o + n], &pa[base + o..base + o + n]);
+                let (b1, b2) = (&pb[base - o..base - o + n], &pb[base + o..base + o + n]);
+                let (head, tail) = tmp.split_at_mut(d * 2 + 1);
+                let (tl, tc) = (&mut head[d * 2][..n], &mut tail[0][..n]);
+                for x in 0..n {
+                    tl[x] = (l1[x] - l[x]).abs().max((l2[x] - l[x]).abs());
+                    let c1 = (a1[x] - a[x]) * (a1[x] - a[x]) + (b1[x] - b[x]) * (b1[x] - b[x]);
+                    let c2 = (a2[x] - a[x]) * (a2[x] - a[x]) + (b2[x] - b[x]) * (b2[x] - b[x]);
+                    tc[x] = c1.max(c2);
+                }
+            }
+            let [e0, e1] = &mut wk.eps;
+            let (e0, e1) = (&mut e0[base..base + n], &mut e1[base..base + n]);
+            for x in 0..n {
+                e0[x] = tmp[0][x].min(tmp[2][x]);
+                e1[x] = tmp[1][x].min(tmp[3][x]);
             }
         }
 
@@ -256,26 +300,45 @@ impl Plan {
         }
 
         // 5. The candidate with the larger summed homogeneity.
+        let n = ec - 2 * HALO;
+        // Vertical sums of the three rows, then horizontal sums of three samples.
+        for d in 0..2 {
+            for i in HALO..er - HALO {
+                let base = i * ec + HALO - 1;
+                let len = n + 2;
+                let (u, c, dn) = (
+                    &wk.hom[d][base - ec..base - ec + len],
+                    &wk.hom[d][base..base + len],
+                    &wk.hom[d][base + ec..base + ec + len],
+                );
+                let v = &mut wk.vsum[d][..len];
+                for x in 0..len {
+                    v[x] = u[x] + c[x] + dn[x];
+                }
+                let h = &mut wk.hsum[d][(i - HALO) * n..(i - HALO + 1) * n];
+                for x in 0..n {
+                    h[x] = v[x] + v[x + 1] + v[x + 2];
+                }
+            }
+        }
         for i in HALO..er - HALO {
-            for j in HALO..ec - HALO {
-                let k = at(i, j);
-                let sum = |h: &[f32]| {
-                    let mut s = 0f32;
-                    for r in [k - ec, k, k + ec] {
-                        s += h[r - 1] + h[r] + h[r + 1];
-                    }
-                    s
-                };
-                let (sh, sv) = (sum(&wk.hom[0]), sum(&wk.hom[1]));
-                let wh = if sh > sv {
+            let r = (i - HALO) * n..(i - HALO + 1) * n;
+            let (sh, sv) = (&wk.hsum[0][r.clone()], &wk.hsum[1][r]);
+            let base = i * ec + HALO;
+            let [r0, g0, b0] = &wk.rgb[0];
+            let [r1, g1, b1] = &wk.rgb[1];
+            let (r0, g0, b0) = (&r0[base..base + n], &g0[base..base + n], &b0[base..base + n]);
+            let (r1, g1, b1) = (&r1[base..base + n], &g1[base..base + n], &b1[base..base + n]);
+            let o = (i - HALO) * nc + c0;
+            for (x, px_out) in out[o..o + n].iter_mut().enumerate() {
+                let w = if sh[x] > sv[x] {
                     1.0
-                } else if sv > sh {
+                } else if sv[x] > sh[x] {
                     0.0
                 } else {
                     0.5
                 };
-                let (a, b) = (wk.rgb[0][k], wk.rgb[1][k]);
-                out[(i - HALO) * nc + c0 + j - HALO] = [0, 1, 2].map(|c| wh * a[c] + (1.0 - wh) * b[c]);
+                *px_out = [w * r0[x] + (1.0 - w) * r1[x], w * g0[x] + (1.0 - w) * g1[x], w * b0[x] + (1.0 - w) * b1[x]];
             }
         }
     }
@@ -285,8 +348,13 @@ impl Plan {
 struct Work {
     m: Vec<f32>,
     g: [Vec<f32>; 2],
-    rgb: [Vec<[f32; 3]>; 2],
+    rgb: [[Vec<f32>; 3]; 2],
     lab: [[Vec<f32>; 3]; 2],
+    diff: Vec<f32>,
+    tmp: [Vec<f32>; 4],
+    vsum: [Vec<f32>; 2],
+    hsum: [Vec<f32>; 2],
+    mask: [[Vec<f32>; 4]; 2],
     eps: [Vec<f32>; 2],
     hom: [Vec<f32>; 2],
 }
@@ -297,7 +365,12 @@ impl Work {
         Work {
             m: vec![0.0; n],
             g: [vec![0.0; n], vec![0.0; n]],
-            rgb: [vec![[0.0; 3]; n], vec![[0.0; 3]; n]],
+            rgb: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; n])),
+            diff: vec![0.0; n],
+            tmp: std::array::from_fn(|_| vec![0.0; ec]),
+            vsum: [vec![0.0; ec], vec![0.0; ec]],
+            hsum: [vec![0.0; n], vec![0.0; n]],
+            mask: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; ec])),
             lab: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; n])),
             eps: [vec![0.0; n], vec![0.0; n]],
             hom: [vec![0.0; n], vec![0.0; n]],
