@@ -52,23 +52,81 @@ const CORE_HALO: usize = R + 2;
 /// and the noise smoothing; X-Trans needs one, for its median).
 pub(crate) const HALO: usize = CORE_HALO + 3;
 /// Output rows per band: bounds the working memory (a few MB at 8000 columns).
-pub(crate) const BAND_ROWS: usize = 32;
+pub(crate) const BAND_ROWS: usize = 64;
 
 struct Tables {
     period: usize,
     /// Colour (0 R, 1 G, 2 B) of each position of the canonical pattern.
     canon: Vec<u8>,
-    /// `[period*period][49]`: the `G0` filter.
-    g0: Vec<f32>,
-    /// `[period*period][3][NDIR][49]`.
-    dir: Vec<f32>,
+    /// The taps of the `G0` filter (`[period*period][49]`) that are not zero, per position.
+    g0_taps: Vec<Vec<Tap<1>>>,
+    /// The taps of the directional filters (`[period*period][3][NDIR][49]`) where some direction is
+    /// not zero, per position and colour.
+    dir_taps: Vec<[Vec<Tap<NDIR>>; 3]>,
+}
+
+/// One filter tap: its index in the 7x7 window and its coefficient in each of `N` filters.
+/// Taps that are zero in every filter are left out (adding `0 * x` changes nothing).
+#[derive(Clone, Copy)]
+struct Tap<const N: usize> {
+    idx: usize,
+    c: [f32; N],
+}
+
+/// Lanes of output columns computed together by [`apply_taps`].
+const LANES: usize = 16;
+
+/// `acc[f][l] = sum over taps of tap.c[f] * planes[start(tap) + k + l]` for the columns
+/// `k..k + n` of a run (`LANES` at a time, the accumulators in registers, the taps added in
+/// list order), handed to `emit(k, count, acc)`. Reads up to `LANES - 1` samples past the end
+/// of a run (the planes carry that padding).
+#[inline(always)]
+fn apply_taps<const N: usize>(
+    taps: &[Tap<N>],
+    starts: &[usize; TAPS],
+    planes: &[f32],
+    n: usize,
+    mut emit: impl FnMut(usize, usize, &[[f32; LANES]; N]),
+) {
+    let mut k = 0;
+    while k < n {
+        let mut acc = [[0f32; LANES]; N];
+        for t in taps {
+            let s = starts[t.idx] + k;
+            let v: &[f32; LANES] = planes[s..s + LANES].try_into().unwrap();
+            for f in 0..N {
+                let c = t.c[f];
+                for l in 0..LANES {
+                    acc[f][l] += c * v[l];
+                }
+            }
+        }
+        emit(k, (n - k).min(LANES), &acc);
+        k += LANES;
+    }
 }
 
 fn load(bytes: &[u8], period: usize, canon: &[u8]) -> Tables {
     let n = period * period;
     let f: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
     assert_eq!(f.len(), n * TAPS + n * 3 * NDIR * TAPS, "edge-aware table size");
-    Tables { period, canon: canon.to_vec(), g0: f[..n * TAPS].to_vec(), dir: f[n * TAPS..].to_vec() }
+    let (g0, dir) = (&f[..n * TAPS], &f[n * TAPS..]);
+    let g0_taps = (0..n)
+        .map(|ph| {
+            (0..TAPS).filter(|&i| g0[ph * TAPS + i] != 0.0).map(|idx| Tap { idx, c: [g0[ph * TAPS + idx]] }).collect()
+        })
+        .collect();
+    let dir_taps = (0..n)
+        .map(|ph| {
+            std::array::from_fn(|c| {
+                (0..TAPS)
+                    .map(|idx| Tap { idx, c: std::array::from_fn(|d| dir[((ph * 3 + c) * NDIR + d) * TAPS + idx]) })
+                    .filter(|t| t.c.iter().any(|&v| v != 0.0))
+                    .collect()
+            })
+        })
+        .collect();
+    Tables { period, canon: canon.to_vec(), g0_taps, dir_taps }
 }
 
 fn bayer() -> &'static Tables {
@@ -325,42 +383,63 @@ impl Plan {
         let [r, g, bl] = &rgb;
         // Channel at plane position (iy, ix): the plane starts `m` pixels before (y0, xa).
         let (py, px) = ((y0 + self.cy + m) % 2, (xa + self.cx + m) % 2);
-        let colour = |iy: usize, ix: usize| t.canon[((iy + py) % 2) * 2 + (ix + px) % 2] as usize;
+        // Masks (1.0 or 0.0) per row kind and plane column: the sample is red / blue. They let
+        // the loops below handle every pixel alike, over whole rows.
+        let mask = |ch: usize| -> [Vec<f32>; 2] {
+            std::array::from_fn(|rk| {
+                (0..ec).map(|x| if t.canon[rk * 2 + (x + px) % 2] as usize == ch { 1.0 } else { 0.0 }).collect()
+            })
+        };
+        let masks = [mask(0), mask(2)];
         // Pass 1, over the core plus `1 + h` pixels: green plus the gated mean of the measured
         // differences of the 3x3 window. `d1[ch / 2]` holds the colour difference (R-G, B-G).
         let (e1r, e1c) = (nr + 2 + 2 * h, nc + 2 + 2 * h);
         let mut d1 = [vec![0f32; e1r * e1c], vec![0f32; e1r * e1c]];
+        let planes = [r, bl];
+        let mut inv = vec![0f32; e1c];
+        // Per colour, the sums over its sites: weights, weighted differences, differences, count.
+        let mut acc: [[Vec<f32>; 4]; 2] = std::array::from_fn(|_| std::array::from_fn(|_| vec![0f32; e1c]));
         for i in 0..e1r {
-            for j in 0..e1c {
-                let c = (i + 1) * ec + j + 1;
-                let own = colour(i + 1, j + 1);
-                let gc = g[c];
-                let inv = 1.0 / (0.2 * gc.max(0.0) + 0.015);
-                for ch in [0usize, 2] {
-                    let plane = if ch == 0 { r } else { bl };
-                    d1[ch / 2][i * e1c + j] = if own == ch {
-                        plane[c] - gc
-                    } else {
-                        let (mut sw, mut sd, mut su, mut n) = (0f32, 0f32, 0f32, 0f32);
-                        for dy in 0..3 {
-                            for dx in 0..3 {
-                                if colour(i + dy, j + dx) != ch {
-                                    continue;
-                                }
-                                let k = (i + dy) * ec + j + dx;
-                                let d = plane[k] - g[k];
-                                let e = (g[k] - gc) * inv;
-                                let wt = 1.0 / (1.0 + e * e);
-                                sw += wt;
-                                sd += wt * d;
-                                su += d;
-                                n += 1.0;
-                            }
+            let gc = &g[(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
+            for (v, &x) in inv.iter_mut().zip(gc) {
+                *v = 1.0 / (0.2 * x.max(0.0) + 0.015);
+            }
+            for a in acc.iter_mut().flatten() {
+                a.fill(0.0);
+            }
+            for dy in 0..3 {
+                let rk = (i + dy + py) % 2;
+                for dx in 0..3 {
+                    let k0 = (i + dy) * ec + dx;
+                    let gk = &g[k0..k0 + e1c];
+                    for (cc, a) in acc.iter_mut().enumerate() {
+                        let ms = &masks[cc][rk][dx..dx + e1c];
+                        let pk = &planes[cc][k0..k0 + e1c];
+                        let [sw, sd, su, n] = a;
+                        for j in 0..e1c {
+                            let d = pk[j] - gk[j];
+                            let e = (gk[j] - gc[j]) * inv[j];
+                            let wt = 1.0 / (1.0 + e * e);
+                            let m = ms[j];
+                            sw[j] += m * wt;
+                            sd[j] += (m * wt) * d;
+                            su[j] += m * d;
+                            n[j] += m;
                         }
-                        // Every 3x3 window holds at least two sites of each colour, and every
-                        // weight is at least 1 / (1 + e^2) > 0; the mean is a safeguard.
-                        if sw > 1e-12 { sd / sw } else { su / n }
-                    };
+                    }
+                }
+            }
+            let rk = (i + 1 + py) % 2;
+            for cc in 0..2 {
+                let own = &masks[cc][rk][1..1 + e1c];
+                let pc = &planes[cc][(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
+                let [sw, sd, su, n] = &acc[cc];
+                let o = &mut d1[cc][i * e1c..(i + 1) * e1c];
+                for j in 0..e1c {
+                    // Every 3x3 window holds at least two sites of each colour, and every
+                    // weight is at least 1 / (1 + e^2) > 0; the mean is a safeguard.
+                    let mixed = if sw[j] > 1e-12 { sd[j] / sw[j] } else { su[j] / n[j] };
+                    o[j] = if own[j] != 0.0 { pc[j] - gc[j] } else { mixed };
                 }
             }
         }
@@ -368,29 +447,42 @@ impl Plan {
         // pixel (measured and pass-1 values), for the two colours the pixel does not measure.
         let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
         let mut v2 = vec![[0f32; 3]; e2r * e2c];
+        let mut inv = vec![0f32; e2c];
+        let [mut sw, mut sdr, mut sdb] = [vec![0f32; e2c], vec![0f32; e2c], vec![0f32; e2c]];
         for i in 0..e2r {
-            for j in 0..e2c {
-                let c = (i + 2) * ec + j + 2;
-                let own = colour(i + 2, j + 2);
-                let gc = g[c];
-                let inv = 1.0 / (0.1 * gc.max(0.0) + 0.007);
-                let mut v = [r[c], gc, bl[c]];
-                for ch in [0usize, 2] {
-                    if own == ch {
-                        continue;
+            let c0 = (i + 2) * ec + 2;
+            let gc = &g[c0..c0 + e2c];
+            for (v, &x) in inv.iter_mut().zip(gc) {
+                *v = 1.0 / (0.1 * x.max(0.0) + 0.007);
+            }
+            sw.fill(0.0);
+            sdr.fill(0.0);
+            sdb.fill(0.0);
+            for dy in 0..3 {
+                for dx in 0..3 {
+                    let k0 = (i + dy + 1) * ec + dx + 1;
+                    let gk = &g[k0..k0 + e2c];
+                    let q0 = (i + dy) * e1c + dx;
+                    let (dr, db) = (&d1[0][q0..q0 + e2c], &d1[1][q0..q0 + e2c]);
+                    for j in 0..e2c {
+                        let e = (gk[j] - gc[j]) * inv[j];
+                        let wt = 1.0 / (1.0 + e * e);
+                        sw[j] += wt;
+                        sdr[j] += wt * dr[j];
+                        sdb[j] += wt * db[j];
                     }
-                    let (mut sw, mut sd) = (0f32, 0f32);
-                    for dy in 0..3 {
-                        for dx in 0..3 {
-                            let e = (g[(i + dy + 1) * ec + j + dx + 1] - gc) * inv;
-                            let wt = 1.0 / (1.0 + e * e);
-                            sw += wt;
-                            sd += wt * d1[ch / 2][(i + dy) * e1c + j + dx];
-                        }
-                    }
-                    v[ch] = gc + sd / sw;
                 }
-                v2[i * e2c + j] = v;
+            }
+            let rk = (i + 2 + py) % 2;
+            let (own_r, own_b) = (&masks[0][rk][2..2 + e2c], &masks[1][rk][2..2 + e2c]);
+            let (rc, bc) = (&r[c0..c0 + e2c], &bl[c0..c0 + e2c]);
+            let o = &mut v2[i * e2c..(i + 1) * e2c];
+            for j in 0..e2c {
+                o[j] = [
+                    if own_r[j] != 0.0 { rc[j] } else { gc[j] + sdr[j] / sw[j] },
+                    gc[j],
+                    if own_b[j] != 0.0 { bc[j] } else { gc[j] + sdb[j] / sw[j] },
+                ];
             }
         }
         if h == 0 {
@@ -423,20 +515,18 @@ impl Plan {
 
         // 1. White balanced mosaic, split by column phase so every filter tap is a
         //    contiguous run.
-        let mut planes = vec![0f32; p * nrb * pw];
+        let mut planes = vec![0f32; p * nrb * pw + LANES];
         let mut row = vec![0f32; w];
         for lr in 0..nrb {
             fetch(by0 + lr, &mut row);
             let cr = (by0 + lr + self.cy) % p;
-            let mut q = self.cx;
-            for (x, &v) in row.iter().enumerate() {
-                let scale = wb[t.canon[cr * p + q] as usize];
+            for q in 0..p {
                 // Clipped samples end up at the white level in every channel (the output
                 // clamps there too).
-                planes[(q * nrb + lr) * pw + x / p] = (v * scale).min(1.0);
-                q += 1;
-                if q == p {
-                    q = 0;
+                let scale = wb[t.canon[cr * p + q] as usize];
+                let dst = &mut planes[(q * nrb + lr) * pw..(q * nrb + lr + 1) * pw];
+                for (d, &v) in dst.iter_mut().zip(row[off(q)..].iter().step_by(p)) {
+                    *d = (v * scale).min(1.0);
                 }
             }
         }
@@ -457,7 +547,6 @@ impl Plan {
         // 2. sqrt(G0) on rows y0-2..y1+2, columns xa-2..xb+2.
         let (gr, gc) = (nr + 4, nc + 4);
         let mut g = vec![0f32; gr * gc];
-        let mut acc = vec![0f32; gc.div_ceil(p) + 2];
         for i in 0..gr {
             let y = y0 + i - 2;
             let cr = (y + self.cy) % p;
@@ -468,21 +557,18 @@ impl Plan {
                     continue;
                 }
                 let n = j1 - j0;
-                let taps = &t.g0[(cr * p + q) * TAPS..][..TAPS];
-                acc[..n].fill(0.0);
+                let mut starts = [0usize; TAPS];
                 for ty in 0..K {
                     for tx in 0..K {
-                        let c = taps[ty * K + tx];
-                        let s = src(lr + ty - R, q, tx, j0);
-                        for (a, v) in acc[..n].iter_mut().zip(&planes[s..s + n]) {
-                            *a += c * *v;
-                        }
+                        starts[ty * K + tx] = src(lr + ty - R, q, tx, j0);
                     }
                 }
-                for (k, a) in acc[..n].iter().enumerate() {
-                    let x = p * (j0 + k) + off(q);
-                    g[i * gc + x - (xa - 2)] = a.max(0.0).sqrt();
-                }
+                apply_taps(&t.g0_taps[cr * p + q], &starts, &planes, n, |k0, len, acc| {
+                    for l in 0..len {
+                        let x = p * (j0 + k0 + l) + off(q);
+                        g[i * gc + x - (xa - 2)] = acc[0][l].max(0.0).sqrt();
+                    }
+                });
             }
         }
 
@@ -516,26 +602,33 @@ impl Plan {
             }
         }
         let mut wts: [Vec<f32>; NDIR] = std::array::from_fn(|_| vec![0f32; nr * nc]);
+        let mut inv = vec![0f32; nc];
         for i in 0..nr {
-            let rows: [[&[f32]; 3]; NDIR] =
-                std::array::from_fn(|d| std::array::from_fn(|a| &hsum[d][(i + a) * nc..(i + a + 1) * nc]));
+            for d in 0..NDIR {
+                let h = &hsum[d];
+                let (a, b, c) =
+                    (&h[i * nc..(i + 1) * nc], &h[(i + 1) * nc..(i + 2) * nc], &h[(i + 2) * nc..(i + 3) * nc]);
+                for (j, o) in wts[d][i * nc..(i + 1) * nc].iter_mut().enumerate() {
+                    let u = a[j] + b[j] + c[j] + EPS;
+                    *o = 1.0 / (u * u);
+                }
+            }
+            let [w0, w1, w2, w3] = &mut wts;
+            let r = i * nc..(i + 1) * nc;
+            let (w0, w1, w2, w3) = (&mut w0[r.clone()], &mut w1[r.clone()], &mut w2[r.clone()], &mut w3[r]);
             for j in 0..nc {
-                let mut wd = [0f32; NDIR];
-                for d in 0..NDIR {
-                    let u = rows[d][0][j] + rows[d][1][j] + rows[d][2][j] + EPS;
-                    wd[d] = 1.0 / (u * u);
-                }
-                let inv = 1.0 / (wd[0] + wd[1] + wd[2] + wd[3]);
-                for d in 0..NDIR {
-                    wts[d][i * nc + j] = wd[d] * inv;
-                }
+                inv[j] = 1.0 / (w0[j] + w1[j] + w2[j] + w3[j]);
+            }
+            for j in 0..nc {
+                w0[j] *= inv[j];
+                w1[j] *= inv[j];
+                w2[j] *= inv[j];
+                w3[j] *= inv[j];
             }
         }
 
-        // 4. The filters. Chunks of columns keep the accumulators in L1 while every tap's
-        //    samples are used by all the filters of the pixel.
-        const CH: usize = 128;
-        let mut accs = vec![[0f32; CH]; 2 * NDIR];
+        // 4. The filters, `LANES` columns at a time with the accumulators in registers.
+        let mut res = [vec![[0f32; NDIR]; pw + LANES], vec![[0f32; NDIR]; pw + LANES]];
         for i in 0..nr {
             let y = y0 + i;
             let lr = y - by0;
@@ -545,46 +638,36 @@ impl Plan {
                 if j1 == j0 {
                     continue;
                 }
+                let n = j1 - j0;
                 let own = t.canon[cr * p + q] as usize;
                 let miss: [usize; 2] = match own {
                     0 => [1, 2],
                     1 => [0, 2],
                     _ => [0, 1],
                 };
-                let base = (cr * p + q) * 3;
-                let mut jc = j0;
-                while jc < j1 {
-                    let jn = (jc + CH).min(j1);
-                    let n = jn - jc;
-                    for a in accs.iter_mut() {
-                        a[..n].fill(0.0);
+                let mut starts = [0usize; TAPS];
+                for ty in 0..K {
+                    for tx in 0..K {
+                        starts[ty * K + tx] = src(lr + ty - R, q, tx, j0);
                     }
-                    for ty in 0..K {
-                        for tx in 0..K {
-                            let s = src(lr + ty - R, q, tx, jc);
-                            let v = &planes[s..s + n];
-                            for (m, &c) in miss.iter().enumerate() {
-                                for d in 0..NDIR {
-                                    let coef = t.dir[((base + c) * NDIR + d) * TAPS + ty * K + tx];
-                                    for (a, x) in accs[m * NDIR + d][..n].iter_mut().zip(v) {
-                                        *a += coef * *x;
-                                    }
-                                }
-                            }
+                }
+                for (m, &c) in miss.iter().enumerate() {
+                    let r = &mut res[m];
+                    apply_taps(&t.dir_taps[cr * p + q][c], &starts, &planes, n, |k0, len, acc| {
+                        for l in 0..len {
+                            r[k0 + l] = std::array::from_fn(|d| acc[d][l]);
                         }
+                    });
+                }
+                for k in 0..n {
+                    let x = p * (j0 + k) + off(q) - xa;
+                    let o = i * nc + x;
+                    let wd = [wts[0][o], wts[1][o], wts[2][o], wts[3][o]];
+                    for (m, &c) in miss.iter().enumerate() {
+                        let a = &res[m][k];
+                        out[c][o] = wd[0] * a[0] + wd[1] * a[1] + wd[2] * a[2] + wd[3] * a[3];
                     }
-                    for k in 0..n {
-                        let j = jc + k;
-                        let x = p * j + off(q) - xa;
-                        let o = i * nc + x;
-                        let wd = [wts[0][o], wts[1][o], wts[2][o], wts[3][o]];
-                        for (m, &c) in miss.iter().enumerate() {
-                            let a = &accs[m * NDIR..];
-                            out[c][o] = wd[0] * a[0][k] + wd[1] * a[1][k] + wd[2] * a[2][k] + wd[3] * a[3][k];
-                        }
-                        out[own][o] = planes[(lr + q * nrb) * pw + j];
-                    }
-                    jc = jn;
+                    out[own][o] = planes[(lr + q * nrb) * pw + j0 + k];
                 }
             }
         }
