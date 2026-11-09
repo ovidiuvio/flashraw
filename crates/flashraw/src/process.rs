@@ -967,7 +967,13 @@ impl Kernel<'_> {
         let bayer = self.cfa.is_some_and(|p| p.is_bayer());
         // Bayer fast path: colour of this row's sites indexed by absolute column parity.
         let row_colors = [color((2 - ox0 % 2) % 2, y), color((3 - ox0 % 2) % 2, y)];
+        let rows3 = [r_up, r_mid, r_dn];
+        // Neighbour lists of this row's pattern phases; the column phase steps with x.
+        let nb = &self.neigh[py * self.pw..(py + 1) * self.pw];
+        let mut phase = (self.crop.x as usize + ox0) % self.pw;
         for (i, o) in out.iter_mut().enumerate() {
+            let px = phase;
+            phase = if phase + 1 == self.pw { 0 } else { phase + 1 };
             if skip.contains(&i) {
                 continue;
             }
@@ -993,7 +999,7 @@ impl Kernel<'_> {
                 *o = self.finish(rgb);
                 continue;
             }
-            let lists = &self.neigh[py * self.pw + (x + ox0) % self.pw];
+            let lists = &nb[px];
             let mut rgb = [0f32; 4];
             if interior_y && x > 0 && x + 1 < w {
                 // Fast path: all 3x3 neighbours exist.
@@ -1001,12 +1007,7 @@ impl Kernel<'_> {
                     let (list, inv) = &lists[c];
                     let mut s = 0f32;
                     for &(dx, dy) in list {
-                        let r = match dy {
-                            -1 => r_up,
-                            0 => r_mid,
-                            _ => r_dn,
-                        };
-                        s += r[(x as isize + dx) as usize];
+                        s += rows3[(dy + 1) as usize][(x as isize + dx) as usize];
                     }
                     rgb[c] = s * inv;
                 }
