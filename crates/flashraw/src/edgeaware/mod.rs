@@ -63,6 +63,11 @@ struct Tables {
     /// The taps of the directional filters (`[period*period][3][NDIR][49]`) where some direction is
     /// not zero, per position and colour.
     dir_taps: Vec<[Vec<Tap<NDIR>>; 3]>,
+    /// The dense tables the GPU kernels read: `[period*period][49]` and `[period*period][3][NDIR][49]`.
+    #[cfg(feature = "gpu")]
+    g0: Vec<f32>,
+    #[cfg(feature = "gpu")]
+    dir: Vec<f32>,
 }
 
 /// One filter tap: its index in the 7x7 window and its coefficient in each of `N` filters.
@@ -126,7 +131,16 @@ fn load(bytes: &[u8], period: usize, canon: &[u8]) -> Tables {
             })
         })
         .collect();
-    Tables { period, canon: canon.to_vec(), g0_taps, dir_taps }
+    Tables {
+        period,
+        canon: canon.to_vec(),
+        g0_taps,
+        dir_taps,
+        #[cfg(feature = "gpu")]
+        g0: g0.to_vec(),
+        #[cfg(feature = "gpu")]
+        dir: dir.to_vec(),
+    }
 }
 
 fn bayer() -> &'static Tables {
