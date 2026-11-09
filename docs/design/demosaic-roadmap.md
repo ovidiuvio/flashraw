@@ -49,7 +49,7 @@ and column tiling were tried and did not explain it.
   +0.8 dB under noise, and the lowest real-file speckle index of every demosaic measured ([ahd-demosaic](ahd-demosaic.md)).
 * Edge-aware X-Trans filters trained with a 5x5 support (below).
 * Speed, all with unchanged output unless noted: `Ppg` and `Rcd` in branch-free row loops with a 4-sample halo (25 % and
-  14 % faster; the border ring changes) and 256-column chunks (cache-resident with many threads: 18 % and 25 % faster on
+  14 % faster; the border ring changes) and 256-column chunks (cache-resident with many threads: 19 % and 24 % faster on
   16 threads of the x86-64 machine), the black-level normalisation vectorised (it was about a fifth of the
   post-process time of every demosaic), the 16-bit encode loop, `clamp` replaced in the AHD green loop (it kept the
   loop scalar; 10 % faster), and the bilinear path of X-Trans and other patterns (11 % faster). Figures from an Apple
