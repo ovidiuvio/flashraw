@@ -23,6 +23,8 @@ Parsers accept the aliases listed; the canonical name is the first one. Each row
 | Demosaic: edge-aware (Bayer, X-Trans; CPU and GPU) | `Demosaic::EdgeAware` (`"edge-aware"`, alias `edgeaware`) | `edge-aware` | `"edge-aware"` | `'edge-aware'` | `FLASHRAW_DEMOSAIC_EDGE_AWARE` |
 | Demosaic: homogeneity-directed (Bayer; other sensors edge-aware where available; CPU only) | `Demosaic::Ahd` (`"ahd"`) | `ahd` | `"ahd"` | `'ahd'` | `FLASHRAW_DEMOSAIC_AHD` |
 | Demosaic: best validated for the sensor (edge-aware on Bayer and X-Trans, else bilinear) | `Demosaic::Auto` (`"auto"`) | `auto` | `"auto"` | `'auto'` | `FLASHRAW_DEMOSAIC_AUTO` |
+| Demosaic: patterned pixel grouping (Bayer only, else an error; CPU only) | `Demosaic::Ppg` (`"ppg"`) | `ppg` | `"ppg"` | `'ppg'` | `FLASHRAW_DEMOSAIC_PPG` |
+| Demosaic: ratio-corrected, experimental (Bayer only, else an error; CPU only) | `Demosaic::Rcd` (`"rcd"`) | `rcd` | `"rcd"` | `'rcd'` | `FLASHRAW_DEMOSAIC_RCD` |
 | Demosaic: bilinear | `Demosaic::Bilinear` | `bilinear` | `"bilinear"` | `'bilinear'` | `FLASHRAW_DEMOSAIC_BILINEAR` |
 | Output: sensor samples as stored | `OutputFormat::RawU16` (`"raw-u16"`, aliases `raw`, `u16`) | `raw-u16` | `"raw-u16"` | `'raw-u16'` | `FLASHRAW_OUTPUT_RAW_U16` |
 | Output: sensor samples as f32 | `RawF32` (`"raw-f32"`) | `raw-f32` | `"raw-f32"` | `'raw-f32'` | `FLASHRAW_OUTPUT_RAW_F32` |

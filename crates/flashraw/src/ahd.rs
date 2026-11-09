@@ -57,6 +57,11 @@ impl Plan {
         ok.then_some(Plan { col })
     }
 
+    /// The colour (0 R, 1 G, 2 B) of each position of the 2x2 pattern, indexed by `(y & 1) * 2 + (x & 1)`.
+    pub(crate) fn colours(&self) -> [u8; 4] {
+        self.col
+    }
+
     /// Develop rows `y0..y1` (frame coordinates) and columns `xa..xb` into `out`
     /// (`(y1 - y0) * (xb - xa)` camera RGB pixels, white balanced by `wb`, indexed by channel).
     /// Needs `HALO <= y0`, `y1 + HALO <= height`, `HALO <= xa`, `xb + HALO <= w`.

@@ -101,6 +101,7 @@
 #![warn(missing_docs)]
 
 mod ahd;
+mod bayer_alt;
 mod ca;
 mod camera_profile;
 mod color;
@@ -288,6 +289,12 @@ impl<'a> FlashRaw<'a> {
     /// full-size preview instead (see [`FrameSource::Preview`]).
     pub fn decode(&self, mut opts: DecodeOptions) -> Result<RawFrame> {
         opts.demosaic = opts.demosaic.resolve(self.decoder.frame_info().cfa.as_ref());
+        if opts.demosaic.requires_bayer() && opts.output.is_rgb() && !process::is_bayer(self.decoder.frame_info()) {
+            return Err(Error::InvalidArgument(format!(
+                "the {} demosaic needs a Bayer sensor; this file's pattern is not one (use edge-aware, bilinear or auto)",
+                opts.demosaic.name()
+            )));
+        }
         // One thread: run on the calling thread rather than on a one-worker pool, so the
         // decode keeps the caller's scheduling class (a lone pool worker may be placed on
         // an efficiency core).

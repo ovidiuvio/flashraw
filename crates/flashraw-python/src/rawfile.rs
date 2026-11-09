@@ -328,7 +328,9 @@ impl RawFile {
         let dm = Demosaic::parse(demosaic).ok_or_else(|| {
             invalid(
                 py,
-                format!("unknown demosaic {demosaic:?} (expected bilinear, half-size, edge-aware, ahd or auto)"),
+                format!(
+                    "unknown demosaic {demosaic:?} (expected bilinear, half-size, edge-aware, ahd, ppg, rcd or auto)"
+                ),
             )
         })?;
         let hl = Highlights::parse(highlights).ok_or_else(|| {

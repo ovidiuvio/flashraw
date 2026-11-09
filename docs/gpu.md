@@ -126,7 +126,7 @@ store.
 `Demosaic::EdgeAware` (Bayer and X-Trans; other patterns, several components per pixel and four-colour
 sensors develop bilinearly, as on the CPU) runs on the GPU for every RGB output, including the `Gpu*` resident
 ones. Method: [edge-aware-demosaic](design/edge-aware-demosaic.md); CPU reference:
-`crates/flashraw/src/edgeaware/mod.rs`. `Demosaic::Ahd`, `Highlights::Neutral`/`Blend` and `WhiteBalanceMode::Auto` still run on the
+`crates/flashraw/src/edgeaware/mod.rs`. `Demosaic::Ahd`, `Demosaic::Ppg`, `Demosaic::Rcd`, `Highlights::Neutral`/`Blend` and `WhiteBalanceMode::Auto` still run on the
 CPU.
 
 It is several dispatches per band instead of one fused kernel, because every stage needs the stage before it in a

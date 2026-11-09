@@ -9,6 +9,7 @@
 
 use crate::RawPixelData;
 use crate::ahd;
+use crate::bayer_alt;
 use crate::color::{ColorSpace, OutputCurve};
 use crate::edgeaware;
 use crate::options::{Demosaic, Highlights};
@@ -772,6 +773,8 @@ pub(crate) struct Kernel<'a> {
     edge: Option<edgeaware::Plan>,
     /// Homogeneity-directed demosaic of Bayer frames (`Demosaic::Ahd`).
     ahd: Option<ahd::Plan>,
+    /// Alternative Bayer demosaics (`Demosaic::Ppg`, `Rcd`).
+    alt: Option<bayer_alt::Plan>,
     /// Balance applied to the mosaic by the edge-aware demosaic.
     dm_wb: [f32; 4],
 }
@@ -1034,6 +1037,8 @@ impl Kernel<'_> {
             edgeaware::BAND_ROWS
         } else if self.ahd.is_some() {
             ahd::BAND_ROWS
+        } else if self.alt.is_some() {
+            bayer_alt::BAND_ROWS
         } else {
             STRIP as usize
         }
@@ -1045,10 +1050,11 @@ impl Kernel<'_> {
     fn strip(&self, cache: &mut RowCache, first: usize, count: usize, out: &mut [[f32; 3]]) {
         let w = self.img.width as usize;
         let ow = out.len() / count.max(1);
-        let halo = match (&self.edge, &self.ahd) {
-            (Some(_), _) => edgeaware::HALO,
-            (None, Some(_)) => ahd::HALO,
-            (None, None) => 0,
+        let halo = match (&self.edge, &self.ahd, &self.alt) {
+            (Some(_), _, _) => edgeaware::HALO,
+            (None, Some(_), _) => ahd::HALO,
+            (None, None, Some(_)) => bayer_alt::HALO,
+            (None, None, None) => 0,
         };
         if halo == 0 {
             for (i, r) in out.chunks_exact_mut(ow).enumerate() {
@@ -1079,10 +1085,11 @@ impl Kernel<'_> {
                 Some(f) => f(y, row),
                 None => self.normalize_row(y, row),
             };
-            match (&self.edge, &self.ahd) {
-                (Some(p), _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
-                (None, Some(p)) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
-                (None, None) => unreachable!("halo > 0 needs a plan"),
+            match (&self.edge, &self.ahd, &self.alt) {
+                (Some(p), _, _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
+                (None, Some(p), _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
+                (None, None, Some(p)) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
+                (None, None, None) => unreachable!("halo > 0 needs a plan"),
             }
             // Back to this kernel's balance (1 unless it develops unbalanced camera RGB).
             let k = [0, 1, 2].map(|c| self.wb[c] / self.dm_wb[c]);
@@ -1194,6 +1201,16 @@ fn kernel_with<'a>(
             (Demosaic::Ahd, Some(cfa)) if cpp == 1 && m4.is_none() => ahd::Plan::new(&cfa, &chan, origin_usize(origin)),
             _ => None,
         },
+        alt: match (params.demosaic, info.cfa) {
+            (d @ (Demosaic::Ppg | Demosaic::Rcd), Some(cfa)) if cpp == 1 && m4.is_none() => {
+                let method = match d {
+                    Demosaic::Ppg => bayer_alt::Method::Ppg,
+                    _ => bayer_alt::Method::Rcd,
+                };
+                bayer_alt::Plan::new(method, &cfa, &chan, origin_usize(origin))
+            }
+            _ => None,
+        },
         dm_wb: params.dm_wb,
     };
     if let Some(mut plan) = k.edge.take() {
@@ -1224,6 +1241,11 @@ fn origin_usize(o: (u32, u32)) -> (usize, usize) {
 
 /// Colour channels developed: R, G, B as 0, 1, 2 (other colours unused), or the
 /// channels of a four-colour CFA in `order`.
+/// True when `info` describes a plain Bayer mosaic (the sensors the Bayer-only demosaics accept).
+pub(crate) fn is_bayer(info: &FrameInfo) -> bool {
+    info.cfa.is_some_and(|c| ahd::Plan::new(&c, &channel_map(None), (0, 0)).is_some())
+}
+
 fn channel_map(order: Option<[CfaColor; 4]>) -> [u8; 8] {
     let mut map = [NO_CHANNEL; 8];
     match order {

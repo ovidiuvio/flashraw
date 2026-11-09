@@ -66,6 +66,10 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_AHD = 3,
     /// The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
     FLASHRAW_DEMOSAIC_AUTO = 4,
+    /// Patterned pixel grouping for Bayer sensors (other sensors: error). CPU only (the GPU backend decodes on the CPU for it).
+    FLASHRAW_DEMOSAIC_PPG = 5,
+    /// Ratio-corrected demosaic for Bayer sensors, experimental (other sensors: error). CPU only.
+    FLASHRAW_DEMOSAIC_RCD = 6,
 }
 
 /// White balance of the RGB outputs (`flashraw_decode_options.white_balance`).
@@ -715,6 +719,8 @@ pub(crate) fn demosaic_from(v: i32) -> FfiResult<Demosaic> {
         2 => Demosaic::EdgeAware,
         3 => Demosaic::Ahd,
         4 => Demosaic::Auto,
+        5 => Demosaic::Ppg,
+        6 => Demosaic::Rcd,
         _ => return Err(FfiError::invalid(format!("unknown demosaic {v}"))),
     })
 }

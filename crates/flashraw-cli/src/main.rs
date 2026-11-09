@@ -37,7 +37,7 @@ struct DecodeArgs {
     /// Worker threads (default: all cores).
     #[arg(long)]
     threads: Option<usize>,
-    /// Demosaic for RGB outputs: bilinear, half, edge-aware, ahd, auto (edge-aware on Bayer and X-Trans, else bilinear).
+    /// Demosaic for RGB outputs: bilinear, half, edge-aware, ahd, ppg, rcd, auto (edge-aware on Bayer and X-Trans, else bilinear).
     #[arg(long, default_value = "bilinear")]
     demosaic: String,
     /// Clipped highlights of RGB outputs: clip, neutral, blend, reconstruct.

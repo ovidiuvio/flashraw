@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `Demosaic::Auto` (`auto`, `FLASHRAW_DEMOSAIC_AUTO`): the best validated algorithm for the sensor, chosen when the file is
+  decoded (edge-aware on Bayer and X-Trans, bilinear on other patterns). Not the default; the algorithm behind it may change
+  between minor versions. `Demosaic::Ppg` (`ppg`, `FLASHRAW_DEMOSAIC_PPG`) and `Demosaic::Rcd` (`rcd`, `FLASHRAW_DEMOSAIC_RCD`,
+  experimental): two more Bayer demosaics, CPU only; on a sensor that is not Bayer they fail with `Error::InvalidArgument` for
+  RGB outputs. Ground-truth numbers and the experiments that were not kept: `docs/design/bayer-demosaics.md`,
+  `docs/design/demosaic-roadmap.md`. The edge-aware GPU build compiles again (the dense filter tables the GPU kernels read had
+  been dropped by the register-tiled CPU rewrite).
 - `Demosaic::Ahd` (`ahd` in the CLI, Python, JavaScript and C, `FLASHRAW_DEMOSAIC_AHD`): homogeneity-directed
   interpolation (Hirakawa and Parks) for Bayer sensors, written from the paper; other sensors use the edge-aware
   demosaic where it exists. On ground-truth tiles it scores within 0.05 dB of a widely used implementation of the

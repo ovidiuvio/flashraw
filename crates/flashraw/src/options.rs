@@ -226,6 +226,16 @@ pub enum Demosaic {
     /// ground-truth edges), and it does not smooth noise. Other sensors use the edge-aware
     /// demosaic where it exists, else bilinear. CPU only (the GPU backend decodes on the CPU for it).
     Ahd,
+    /// Patterned pixel grouping for Bayer sensors: green interpolated along the row or column of
+    /// smaller gradient, red and blue from colour differences (along the diagonal of smaller
+    /// gradient where the colour is not measured on the row or column). Cleaner than bilinear
+    /// and a little cheaper than [`Demosaic::Ahd`]. Bayer only: other sensors are an
+    /// error ([`crate::Error::InvalidArgument`]).
+    Ppg,
+    /// Ratio-corrected demosaic for Bayer sensors (experimental): green from ratio-corrected
+    /// directional estimates weighted by local gradients, red and blue from colour differences
+    /// with soft diagonal weights. Bayer only. May change or be removed between minor versions.
+    Rcd,
     /// The best validated algorithm for the sensor, chosen when the file is decoded and the same
     /// for the same sensor type on every machine: [`Demosaic::EdgeAware`] on Bayer and X-Trans
     /// sensors (the smallest error against ground truth on clean and noisy tiles in the
@@ -486,6 +496,12 @@ impl Default for DecodeOptions {
 }
 
 impl Demosaic {
+    /// True for the algorithms that need a Bayer sensor and are rejected with
+    /// [`crate::Error::InvalidArgument`] on other sensors when an RGB output is requested.
+    pub fn requires_bayer(self) -> bool {
+        matches!(self, Demosaic::Ppg | Demosaic::Rcd)
+    }
+
     /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`, `ahd`, `auto`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
@@ -493,6 +509,8 @@ impl Demosaic {
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
             "edge-aware" | "edgeaware" => Demosaic::EdgeAware,
             "ahd" => Demosaic::Ahd,
+            "ppg" => Demosaic::Ppg,
+            "rcd" => Demosaic::Rcd,
             "auto" => Demosaic::Auto,
             _ => return None,
         })
@@ -505,6 +523,8 @@ impl Demosaic {
             Demosaic::HalfSize => "half-size",
             Demosaic::EdgeAware => "edge-aware",
             Demosaic::Ahd => "ahd",
+            Demosaic::Ppg => "ppg",
+            Demosaic::Rcd => "rcd",
             Demosaic::Auto => "auto",
         }
     }
@@ -647,7 +667,15 @@ mod tests {
         for m in [WhiteBalanceMode::AsShot, WhiteBalanceMode::Auto] {
             assert_eq!(m.to_string().parse::<WhiteBalanceMode>(), Ok(m));
         }
-        for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware, Demosaic::Ahd, Demosaic::Auto] {
+        for d in [
+            Demosaic::Bilinear,
+            Demosaic::HalfSize,
+            Demosaic::EdgeAware,
+            Demosaic::Ahd,
+            Demosaic::Ppg,
+            Demosaic::Rcd,
+            Demosaic::Auto,
+        ] {
             assert_eq!(d.to_string().parse::<Demosaic>(), Ok(d));
         }
         for p in [CorruptionPolicy::Strict, CorruptionPolicy::Recover] {

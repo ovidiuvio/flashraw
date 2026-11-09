@@ -131,7 +131,7 @@ frame = raw.decode(
     threads=None,                # worker threads for this decode (None = all cores)
     region=None,                 # Rect / (x, y, width, height) / dict, sensor coordinates
     crop=True,                   # RGB outputs: default crop; "active": raw outputs → active area
-    demosaic="bilinear",         # or "half-size" (2x2 binning), "edge-aware" (Bayer/X-Trans, slower, cleaner), "ahd" (Bayer, homogeneity-directed, CPU only), "auto" (best validated for the sensor)
+    demosaic="bilinear",         # or "half-size" (2x2 binning), "edge-aware" (Bayer/X-Trans, slower, cleaner), "ahd" (Bayer, homogeneity-directed, CPU only), "ppg" / "rcd" (Bayer, CPU only), "auto" (best validated for the sensor)
     white_balance_multipliers=None,  # (r, g, b): replaces white_balance (RGB outputs, CPU only)
     noise_reduction="auto",      # edge-aware smoothing: "off", "low", "medium", "high" (not auto: CPU only)
     chromatic_aberration=False,  # True: correct the lateral chromatic aberration of Bayer frames (RGB outputs, CPU only)

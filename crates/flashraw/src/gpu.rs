@@ -125,7 +125,7 @@ fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuCon
     // The AHD demosaic, the highlight modes, the white balance modes, the noise levels, the chromatic aberration correction and
     // camera profiles run on the CPU only.
     if (opts.highlights != crate::Highlights::Clip
-        || opts.demosaic == crate::Demosaic::Ahd
+        || matches!(opts.demosaic, crate::Demosaic::Ahd | crate::Demosaic::Ppg | crate::Demosaic::Rcd)
         || opts.white_balance != crate::WhiteBalanceMode::AsShot
         || opts.white_balance_multipliers.is_some()
         || opts.noise_reduction != crate::NoiseReduction::Auto
@@ -135,7 +135,7 @@ fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuCon
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with the AHD demosaic, highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
+                "GPU-resident RGB output with the AHD, PPG or RCD demosaic, highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
             ));
         }
         return Ok(None);

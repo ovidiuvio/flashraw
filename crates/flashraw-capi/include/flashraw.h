@@ -229,6 +229,14 @@ enum flashraw_demosaic
      * The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
      */
     FLASHRAW_DEMOSAIC_AUTO = 4,
+    /**
+     * Patterned pixel grouping for Bayer sensors (other sensors: error). CPU only (the GPU backend decodes on the CPU for it).
+     */
+    FLASHRAW_DEMOSAIC_PPG = 5,
+    /**
+     * Ratio-corrected demosaic for Bayer sensors, experimental (other sensors: error). CPU only.
+     */
+    FLASHRAW_DEMOSAIC_RCD = 6,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
