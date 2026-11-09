@@ -356,32 +356,26 @@ fn log2ceil(v: i32) -> u32 {
 
 impl QTable {
     /// Level lookup for differences in `-max..=max` with thresholds `qp[0..4]`, indexed
-    /// by the difference modulo the table size.
+    /// by the difference modulo the table size. Filled by contiguous slice ranges (`memset`)
+    /// instead of a 131K-iteration per-element branch loop.
     fn lut(qp: [i32; 5]) -> Lut {
-        let max = qp[4];
-        let mut t: Lut = vec![0; LUT_LEN].into_boxed_slice().try_into().unwrap();
-        for v in -max..=max {
-            t[v as usize & (LUT_LEN - 1)] = {
-                if v <= -qp[3] {
-                    -4
-                } else if v <= -qp[2] {
-                    -3
-                } else if v <= -qp[1] {
-                    -2
-                } else if v < -qp[0] {
-                    -1
-                } else if v <= qp[0] {
-                    0
-                } else if v < qp[1] {
-                    1
-                } else if v < qp[2] {
-                    2
-                } else if v < qp[3] {
-                    3
-                } else {
-                    4
-                }
-            };
+        let mut t: Lut = vec![0i8; LUT_LEN].into_boxed_slice().try_into().unwrap();
+        let [q0, q1, q2, q3, max] = qp.map(|x| x as usize);
+        if q0 + 1 < q1 {
+            t[q0 + 1..q1].fill(1);
+            t[LUT_LEN - (q1 - 1)..LUT_LEN - q0].fill(-1);
+        }
+        if q1 < q2 {
+            t[q1..q2].fill(2);
+            t[LUT_LEN - q2..LUT_LEN - (q1 - 1)].fill(-2);
+        }
+        if q2 < q3 {
+            t[q2..q3].fill(3);
+            t[LUT_LEN - q3..LUT_LEN - (q2 - 1)].fill(-3);
+        }
+        if q3 <= max {
+            t[q3..=max].fill(4);
+            t[LUT_LEN - max..=LUT_LEN - q3].fill(-4);
         }
         t
     }
@@ -440,15 +434,16 @@ struct Common {
     max_value: i32,
     /// Main tables indexed by q_base (lossless: only index 0).
     main: Vec<Option<QTable>>,
-    extra: [QTable; 3],
+    extra: Option<[QTable; 3]>,
 }
 
 impl Common {
     fn new(h: &FujiHeader, q_bases: &[&[u8]]) -> Result<Self> {
         let max_value = (1i32 << h.bits) - 1;
         let mut main: Vec<Option<QTable>> = vec![None; 256];
-        if h.lossless {
+        let extra = if h.lossless {
             main[0] = Some(QTable::main(0, max_value));
+            None
         } else {
             // Precompute the (few) distinct line quantisers once for all blocks.
             let mut seen = [false; 256];
@@ -458,14 +453,9 @@ impl Common {
             for (q, _) in seen.iter().enumerate().filter(|(_, s)| **s) {
                 main[q] = Some(QTable::main(q as i32, max_value));
             }
-        }
-        Ok(Common {
-            xtrans: h.xtrans,
-            line_width: h.line_width(),
-            max_value,
-            main,
-            extra: QTable::lossy_extra(max_value),
-        })
+            Some(QTable::lossy_extra(max_value))
+        };
+        Ok(Common { xtrans: h.xtrans, line_width: h.line_width(), max_value, main, extra })
     }
 }
 
@@ -569,8 +559,9 @@ impl<'c, 'a, const LOSSY: bool> BlockDecoder<'c, 'a, LOSSY> {
             overrun: false,
         };
         if LOSSY {
+            let extra = c.extra.as_ref().unwrap();
             for k in 0..3 {
-                let max_diff = 2.max((c.extra[k].total_values + 0x20) >> 6);
+                let max_diff = 2.max((extra[k].total_values + 0x20) >> 6);
                 for g in d.grads.iter_mut().flatten() {
                     g.lossy[k] = [new_stat(max_diff, 1); 5];
                 }
@@ -771,9 +762,10 @@ impl Sampler<'_, '_> {
         let mut ctx = usize::MAX;
         if LOSSY {
             // Lossy streams code flat areas with coarser fixed tables.
+            let extra = c.extra.as_ref().unwrap();
             let mut i = 1;
             while qt.q_base >= i && i < 4 {
-                let t = &c.extra[(i - 1) as usize];
+                let t = &extra[(i - 1) as usize];
                 if flat <= t.max_grad {
                     qt = t;
                     ctx = (i - 1) as usize;
