@@ -118,7 +118,7 @@ describe('structured errors', () => {
       for (const opts of [
         { output: 'png' },
         { backend: 'tpu' },
-        { demosaic: 'ahd' },
+        { demosaic: 'vng' },
         { crop: 'yes' },
         { region: { x: -1, y: 0, width: 10, height: 10 } },
         { region: { x: 0, y: 0, width: 0, height: 10 } },

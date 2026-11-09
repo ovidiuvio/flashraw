@@ -63,7 +63,7 @@ def test_bad_arguments(mlv_path: pathlib.Path) -> None:
         dict(output="jpeg"),
         dict(output="gpu-rgba8"),
         dict(backend="quantum"),
-        dict(demosaic="ahd"),
+        dict(demosaic="vng"),
         dict(corruption_policy="lenient"),
         dict(threads=0),
         dict(crop="maybe"),
