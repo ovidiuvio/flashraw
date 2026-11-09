@@ -219,6 +219,13 @@ pub enum Demosaic {
     /// the GPU result equals the CPU's within rounding. It may change between minor versions
     /// as the filters improve.
     EdgeAware,
+    /// Homogeneity-directed interpolation (Hirakawa and Parks) for Bayer sensors: two
+    /// candidate images, interpolated along rows and along columns, of which each pixel takes the
+    /// one that is locally the more homogeneous in a perceptual colour space. Clean on false
+    /// colour at the cost of fine edges against [`Demosaic::EdgeAware`] (lower PSNR on
+    /// ground-truth edges), and it does not smooth noise. Other sensors use the edge-aware
+    /// demosaic where it exists, else bilinear. CPU only (the GPU backend decodes on the CPU for it).
+    Ahd,
 }
 
 /// What RGB outputs do with clipped highlights (samples at the sensor's saturation level).
@@ -471,12 +478,13 @@ impl Default for DecodeOptions {
 }
 
 impl Demosaic {
-    /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`; case-insensitive).
+    /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`, `ahd`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
             "bilinear" => Demosaic::Bilinear,
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
             "edge-aware" | "edgeaware" => Demosaic::EdgeAware,
+            "ahd" => Demosaic::Ahd,
             _ => return None,
         })
     }
@@ -487,6 +495,7 @@ impl Demosaic {
             Demosaic::Bilinear => "bilinear",
             Demosaic::HalfSize => "half-size",
             Demosaic::EdgeAware => "edge-aware",
+            Demosaic::Ahd => "ahd",
         }
     }
 }

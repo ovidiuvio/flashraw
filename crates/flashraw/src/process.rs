@@ -8,6 +8,7 @@
 //! both paths agree.
 
 use crate::RawPixelData;
+use crate::ahd;
 use crate::color::{ColorSpace, OutputCurve};
 use crate::edgeaware;
 use crate::options::{Demosaic, Highlights};
@@ -759,6 +760,8 @@ pub(crate) struct Kernel<'a> {
     half: bool,
     /// Edge-aware demosaic of Bayer / X-Trans frames (`Demosaic::EdgeAware`).
     edge: Option<edgeaware::Plan>,
+    /// Homogeneity-directed demosaic of Bayer frames (`Demosaic::Ahd`).
+    ahd: Option<ahd::Plan>,
     /// Balance applied to the mosaic by the edge-aware demosaic.
     dm_wb: [f32; 4],
 }
@@ -1017,7 +1020,13 @@ impl Kernel<'_> {
 impl Kernel<'_> {
     /// Output rows developed together by one task: the edge-aware demosaic works in bands.
     pub(crate) fn strip_rows(&self) -> usize {
-        if self.edge.is_some() { edgeaware::BAND_ROWS } else { STRIP as usize }
+        if self.edge.is_some() {
+            edgeaware::BAND_ROWS
+        } else if self.ahd.is_some() {
+            ahd::BAND_ROWS
+        } else {
+            STRIP as usize
+        }
     }
 
     /// Develop output rows `first..first + count` into `out` (`count` rows of one RGB per
@@ -1026,15 +1035,19 @@ impl Kernel<'_> {
     fn strip(&self, cache: &mut RowCache, first: usize, count: usize, out: &mut [[f32; 3]]) {
         let w = self.img.width as usize;
         let ow = out.len() / count.max(1);
-        let Some(plan) = &self.edge else {
+        let halo = match (&self.edge, &self.ahd) {
+            (Some(_), _) => edgeaware::HALO,
+            (None, Some(_)) => ahd::HALO,
+            (None, None) => 0,
+        };
+        if halo == 0 {
             for (i, r) in out.chunks_exact_mut(ow).enumerate() {
                 self.row(cache, first + i, r);
             }
             return;
-        };
+        }
         let h = self.img.height as usize;
         let (cx, cy) = (self.crop.x as usize, self.crop.y as usize);
-        let halo = edgeaware::HALO;
         // Output columns whose pixel is far enough from the left / right frame border.
         let ia = halo.saturating_sub(cx).min(ow);
         let ib = (w.saturating_sub(halo).saturating_sub(cx)).min(ow).max(ia);
@@ -1056,7 +1069,11 @@ impl Kernel<'_> {
                 Some(f) => f(y, row),
                 None => self.normalize_row(y, row),
             };
-            plan.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf);
+            match (&self.edge, &self.ahd) {
+                (Some(p), _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
+                (None, Some(p)) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
+                (None, None) => unreachable!("halo > 0 needs a plan"),
+            }
             // Back to this kernel's balance (1 unless it develops unbalanced camera RGB).
             let k = [0, 1, 2].map(|c| self.wb[c] / self.dm_wb[c]);
             for (n, src) in buf.chunks_exact(xb - xa).enumerate() {
@@ -1157,6 +1174,14 @@ fn kernel_with<'a>(
             (Demosaic::EdgeAware, Some(cfa)) if cpp == 1 && m4.is_none() => {
                 edgeaware::Plan::new(&cfa, &chan, origin_usize(origin))
             }
+            // Patterns without a homogeneity-directed demosaic use the edge-aware one.
+            (Demosaic::Ahd, Some(cfa)) if cpp == 1 && m4.is_none() && ahd::Plan::new(&cfa, &chan, (0, 0)).is_none() => {
+                edgeaware::Plan::new(&cfa, &chan, origin_usize(origin))
+            }
+            _ => None,
+        },
+        ahd: match (params.demosaic, info.cfa) {
+            (Demosaic::Ahd, Some(cfa)) if cpp == 1 && m4.is_none() => ahd::Plan::new(&cfa, &chan, origin_usize(origin)),
             _ => None,
         },
         dm_wb: params.dm_wb,

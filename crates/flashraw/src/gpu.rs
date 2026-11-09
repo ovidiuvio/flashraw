@@ -122,9 +122,10 @@ pub fn edge_spec(
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The highlight modes, the white balance modes, the noise levels, the chromatic aberration correction and
+    // The AHD demosaic, the highlight modes, the white balance modes, the noise levels, the chromatic aberration correction and
     // camera profiles run on the CPU only.
     if (opts.highlights != crate::Highlights::Clip
+        || opts.demosaic == crate::Demosaic::Ahd
         || opts.white_balance != crate::WhiteBalanceMode::AsShot
         || opts.white_balance_multipliers.is_some()
         || opts.noise_reduction != crate::NoiseReduction::Auto
@@ -134,7 +135,7 @@ fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuCon
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
+                "GPU-resident RGB output with the AHD demosaic, highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
             ));
         }
         return Ok(None);
