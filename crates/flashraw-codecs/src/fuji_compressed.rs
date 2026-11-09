@@ -469,15 +469,13 @@ struct Stat {
     sum: i32,
     n: u8,
     k: u8,
-    /// `(1 << k) - 1`, the mask of the Rice remainder.
-    mask: u16,
 }
 
 #[inline(always)]
 fn new_stat(sum: i32, n: i32) -> Stat {
     // `n` stays within 1..=MIN_VALUE and `k` within 0..=15.
     let k = bit_diff(sum, n);
-    Stat { sum, n: n as u8, k: k as u8, mask: ((1u32 << k) - 1) as u16 }
+    Stat { sum, n: n as u8, k: k as u8 }
 }
 
 /// Per-context statistics: 41 main gradient contexts and, for lossy streams, 5
@@ -797,15 +795,14 @@ impl Sampler<'_, '_> {
             let grad = 9 * l1 + l2;
             let gi = (grad.unsigned_abs() as usize).min(40);
             let stat = &mut grads.main[gi];
-            let (sum, n, k, mask) = (stat.sum, stat.n as i32, stat.k as u32, stat.mask as u32);
-            self.bits.refill_force();
-            let w = self.bits.peek_no_fill(32);
+            let (sum, n, k) = (stat.sum, stat.n as i32, stat.k as u32);
+            self.bits.fill();
+            let w = self.bits.peek64_no_fill();
             let lz = w.leading_zeros();
-            let code = if w != 0 && (lz as i32) < self.max_zeros && lz + 1 + k <= 32 {
-                let total = lz + 1 + k;
-                let v = (w >> (32 - total)) & mask;
-                self.bits.skip_no_fill(total);
-                ((lz << k) | v) as i32
+            let total = lz + 1 + k;
+            let code = if (lz as i32) < self.max_zeros && total <= self.bits.buffered_bits() {
+                self.bits.skip64_no_fill(total);
+                ((w >> (64 - total)) as u32).wrapping_add(lz.wrapping_sub(1) << k) as i32
             } else {
                 let (bits, overrun, c) = decode_code_slow(self.bits, self.overrun, k, self.max_zeros, self.raw_bits);
                 self.bits = bits;
@@ -847,15 +844,14 @@ impl Sampler<'_, '_> {
         let grad = qt.grad_mult * qt.level(v1) + qt.level(v2);
         let gi = grad.unsigned_abs() as usize;
         let stat = if ctx != usize::MAX { &mut grads.lossy[ctx][gi.min(4)] } else { &mut grads.main[gi.min(40)] };
-        let (sum, n, k, mask) = (stat.sum, stat.n as i32, stat.k as u32, stat.mask as u32);
-        self.bits.refill_force();
-        let w = self.bits.peek_no_fill(32);
+        let (sum, n, k) = (stat.sum, stat.n as i32, stat.k as u32);
+        self.bits.fill();
+        let w = self.bits.peek64_no_fill();
         let lz = w.leading_zeros();
-        let code = if w != 0 && (lz as i32) < qt.max_zeros && lz + 1 + k <= 32 {
-            let total = lz + 1 + k;
-            let v = (w >> (32 - total)) & mask;
-            self.bits.skip_no_fill(total);
-            ((lz << k) | v) as i32
+        let total = lz + 1 + k;
+        let code = if (lz as i32) < qt.max_zeros && total <= self.bits.buffered_bits() {
+            self.bits.skip64_no_fill(total);
+            ((w >> (64 - total)) as u32).wrapping_add(lz.wrapping_sub(1) << k) as i32
         } else {
             let (bits, overrun, c) = decode_code_slow(self.bits, self.overrun, k, qt.max_zeros, qt.raw_bits);
             self.bits = bits;

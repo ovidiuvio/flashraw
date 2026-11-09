@@ -159,6 +159,21 @@ impl<'a> BitPumpMsb<'a> {
         self.pos as u64 * 8 - self.bits as u64
     }
 
+    /// Top-aligned 64-bit bit cache (bit 63 is the next unread bit).
+    /// After [`BitRead::refill_force`], at least 56 bits are valid.
+    #[inline(always)]
+    pub fn peek64_no_fill(&self) -> u64 {
+        self.cache
+    }
+
+    /// Discard `n <= 56` bits from the cache. Requires `n <= self.buffered_bits()`.
+    #[inline(always)]
+    pub fn skip64_no_fill(&mut self, n: u32) {
+        debug_assert!(n <= self.bits);
+        self.cache <<= n;
+        self.bits -= n;
+    }
+
     /// A pump positioned `bit` bits into `data`.
     pub fn at_bit(data: &'a [u8], bit: u64) -> Self {
         let mut p = Self::new(data.get((bit / 8) as usize..).unwrap_or(&[]));
