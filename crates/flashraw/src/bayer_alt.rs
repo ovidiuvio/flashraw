@@ -29,6 +29,8 @@ use flashraw_core::CfaPattern;
 pub(crate) const HALO: usize = 4;
 /// Output rows per band.
 pub(crate) const BAND_ROWS: usize = 64;
+/// Output columns developed together inside a band.
+const CHUNK: usize = 256;
 
 /// The algorithm of a plan.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -111,9 +113,22 @@ impl Plan {
                 m[i * bw + j] = (row[x] * wb[self.col[(y & 1) * 2 + (x & 1)] as usize]).min(1.0);
             }
         }
-        let band = Band { m: &m, er, bw, col: &self.col, py: y0 & 1, px: xa & 1 };
-        let g = band.green(self.method);
-        band.diagonal(self.method, &g, out, nr, nc);
+        // Column chunks keep the working planes in cache (a full-width band of several planes is
+        // megabytes per thread). Results do not depend on the chunking: each pixel reads only its halo.
+        let mut mc = vec![0f32; er * (CHUNK + 2 * HALO)];
+        let mut c0 = 0;
+        while c0 < nc {
+            let cw = CHUNK.min(nc - c0);
+            let ec = cw + 2 * HALO;
+            let mc = &mut mc[..er * ec];
+            for i in 0..er {
+                mc[i * ec..(i + 1) * ec].copy_from_slice(&m[i * bw + c0..i * bw + c0 + ec]);
+            }
+            let band = Band { m: mc, er, bw: ec, col: &self.col, py: y0 & 1, px: (xa + c0) & 1 };
+            let g = band.green(self.method);
+            band.diagonal(self.method, &g, out, nr, cw, (nc, c0));
+            c0 += cw;
+        }
     }
 }
 
@@ -253,10 +268,19 @@ impl Band<'_> {
         }
     }
 
-    /// Red and blue from colour differences, written to `out` for the `nr` x `nc` core. The
+    /// Red and blue from colour differences, written to `out` (rows of `stride` pixels, from column
+    /// `off`) for the `nr` x `nc` core. The
     /// row and column means and the diagonal estimate are computed for every pixel of a row in
     /// branch-free loops; each pixel then takes the ones its colour needs.
-    fn diagonal(&self, method: Method, g: &[f32], out: &mut [[f32; 3]], nr: usize, nc: usize) {
+    fn diagonal(
+        &self,
+        method: Method,
+        g: &[f32],
+        out: &mut [[f32; 3]],
+        nr: usize,
+        nc: usize,
+        (stride, off): (usize, usize),
+    ) {
         const EPS: f32 = 1e-4;
         let (bw, m) = (self.bw, self.m);
         let e: Vec<f32> = m.iter().zip(g).map(|(a, b)| a - b).collect();
@@ -297,7 +321,7 @@ impl Band<'_> {
                     };
             }
             let mc = &row(m, bw, i)[j0..j0 + nc];
-            let o = &mut out[oi * nc..(oi + 1) * nc];
+            let o = &mut out[oi * stride + off..oi * stride + off + nc];
             // Green samples: the colour of their row neighbours from the row, the other from the column.
             let tg = if self.colour(i, j0) == 1 { 0 } else { 1 };
             let row_is_red = self.colour(i, j0 + tg + 1) == 0;
