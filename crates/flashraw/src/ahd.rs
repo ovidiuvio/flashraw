@@ -17,8 +17,11 @@
 //!    candidate V. A candidate's homogeneity there is the number of the 8 neighbours whose
 //!    lightness and chroma are both within the thresholds of the pixel; it is summed over the
 //!    3x3 window.
-//! 4. **Choice.** The candidate with the higher summed homogeneity wins; equal sums average
-//!    the two.
+//! 4. **Blend.** The two candidates are mixed in proportion to their summed homogeneity,
+//!    `w_H = h_H / (h_H + h_V)` (equal halves when both are zero). The paper picks the candidate
+//!    with the larger sum; on the ground-truth tiles the proportional blend is closer to the
+//!    original at every noise level (clean +0.25 dB, noisy +0.7 to +0.8 dB) and real files show
+//!    fewer false-colour dots, so it is the one used.
 //!
 //! The support of a pixel is 6 samples (green 2, colour differences 1, steps 1, neighbours 1,
 //! window 1), so results do not depend on the band, the column chunk, the thread count or the
@@ -305,7 +308,7 @@ impl Plan {
             }
         }
 
-        // 5. The candidate with the larger summed homogeneity.
+        // 5. The candidates blended by their summed homogeneity.
         let n = ec - 2 * HALO;
         // Vertical sums of the three rows, then horizontal sums of three samples.
         for d in 0..2 {
@@ -337,13 +340,11 @@ impl Plan {
             let (r1, g1, b1) = (&r1[base..base + n], &g1[base..base + n], &b1[base..base + n]);
             let o = (i - HALO) * nc + c0;
             for (x, px_out) in out[o..o + n].iter_mut().enumerate() {
-                let w = if sh[x] > sv[x] {
-                    1.0
-                } else if sv[x] > sh[x] {
-                    0.0
-                } else {
-                    0.5
-                };
+                // Weighted by the homogeneity of each candidate rather than picking the larger: on
+                // ground-truth tiles this is closer to the original at every noise level, and real
+                // files show fewer false-colour dots (docs/design/ahd-demosaic.md).
+                let (a, b) = (sh[x], sv[x]);
+                let w = if a + b > 0.0 { a / (a + b) } else { 0.5 };
                 *px_out = [w * r0[x] + (1.0 - w) * r1[x], w * g0[x] + (1.0 - w) * g1[x], w * b0[x] + (1.0 - w) * b1[x]];
             }
         }
