@@ -411,6 +411,7 @@ impl Plan {
         let mut d1 = [vec![0f32; e1r * e1c], vec![0f32; e1r * e1c]];
         let planes = [r, bl];
         let mut inv = vec![0f32; e1c];
+        let mut wtv = vec![0f32; e1c];
         // Per colour, the sums over its sites: weights, weighted differences, differences, count.
         let mut acc: [[Vec<f32>; 4]; 2] = std::array::from_fn(|_| std::array::from_fn(|_| vec![0f32; e1c]));
         for i in 0..e1r {
@@ -426,14 +427,18 @@ impl Plan {
                 for dx in 0..3 {
                     let k0 = (i + dy) * ec + dx;
                     let gk = &g[k0..k0 + e1c];
+                    // The gate weight does not depend on the colour: once for both.
+                    for j in 0..e1c {
+                        let e = (gk[j] - gc[j]) * inv[j];
+                        wtv[j] = 1.0 / (1.0 + e * e);
+                    }
                     for (cc, a) in acc.iter_mut().enumerate() {
                         let ms = &masks[cc][rk][dx..dx + e1c];
                         let pk = &planes[cc][k0..k0 + e1c];
                         let [sw, sd, su, n] = a;
                         for j in 0..e1c {
                             let d = pk[j] - gk[j];
-                            let e = (gk[j] - gc[j]) * inv[j];
-                            let wt = 1.0 / (1.0 + e * e);
+                            let wt = wtv[j];
                             let m = ms[j];
                             sw[j] += m * wt;
                             sd[j] += (m * wt) * d;
