@@ -226,6 +226,14 @@ pub enum Demosaic {
     /// ground-truth edges), and it does not smooth noise. Other sensors use the edge-aware
     /// demosaic where it exists, else bilinear. CPU only (the GPU backend decodes on the CPU for it).
     Ahd,
+    /// The best validated algorithm for the sensor, chosen when the file is decoded and the same
+    /// for the same sensor type on every machine: [`Demosaic::EdgeAware`] on Bayer and X-Trans
+    /// sensors (the smallest error against ground truth on clean and noisy tiles in the
+    /// benchmarks), bilinear on every other pattern. It is not the default (that stays
+    /// [`Demosaic::Bilinear`], the fastest), and the algorithm behind it may change between
+    /// minor versions as better ones are validated; pin an explicit algorithm to keep the
+    /// output stable.
+    Auto,
 }
 
 /// What RGB outputs do with clipped highlights (samples at the sensor's saturation level).
@@ -478,13 +486,14 @@ impl Default for DecodeOptions {
 }
 
 impl Demosaic {
-    /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`, `ahd`; case-insensitive).
+    /// Parse a demosaic name (`bilinear`, `half`/`half-size`, `edge-aware`, `ahd`, `auto`; case-insensitive).
     pub fn parse(s: &str) -> Option<Self> {
         Some(match s.to_ascii_lowercase().replace('_', "-").as_str() {
             "bilinear" => Demosaic::Bilinear,
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
             "edge-aware" | "edgeaware" => Demosaic::EdgeAware,
             "ahd" => Demosaic::Ahd,
+            "auto" => Demosaic::Auto,
             _ => return None,
         })
     }
@@ -496,6 +505,17 @@ impl Demosaic {
             Demosaic::HalfSize => "half-size",
             Demosaic::EdgeAware => "edge-aware",
             Demosaic::Ahd => "ahd",
+            Demosaic::Auto => "auto",
+        }
+    }
+
+    /// The concrete algorithm [`Demosaic::Auto`] stands for on a sensor with this pattern
+    /// (any other value is returned as is). `None` is a sensor without a colour filter array.
+    pub fn resolve(self, cfa: Option<&flashraw_core::CfaPattern>) -> Demosaic {
+        match (self, cfa.map(|c| (c.width(), c.height()))) {
+            (Demosaic::Auto, Some((2, 2) | (6, 6))) => Demosaic::EdgeAware,
+            (Demosaic::Auto, _) => Demosaic::Bilinear,
+            (d, _) => d,
         }
     }
 }
@@ -627,7 +647,7 @@ mod tests {
         for m in [WhiteBalanceMode::AsShot, WhiteBalanceMode::Auto] {
             assert_eq!(m.to_string().parse::<WhiteBalanceMode>(), Ok(m));
         }
-        for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware] {
+        for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware, Demosaic::Ahd, Demosaic::Auto] {
             assert_eq!(d.to_string().parse::<Demosaic>(), Ok(d));
         }
         for p in [CorruptionPolicy::Strict, CorruptionPolicy::Recover] {

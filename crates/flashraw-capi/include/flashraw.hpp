@@ -177,6 +177,7 @@ enum class demosaic : std::int32_t {
     half_size = FLASHRAW_DEMOSAIC_HALF_SIZE,
     edge_aware = FLASHRAW_DEMOSAIC_EDGE_AWARE,
     ahd = FLASHRAW_DEMOSAIC_AHD,
+    auto_ = FLASHRAW_DEMOSAIC_AUTO,
 };
 
 enum class white_balance : std::int32_t {

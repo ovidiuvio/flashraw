@@ -64,6 +64,8 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
     /// Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear). CPU only (the GPU backend decodes on the CPU for it).
     FLASHRAW_DEMOSAIC_AHD = 3,
+    /// The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
+    FLASHRAW_DEMOSAIC_AUTO = 4,
 }
 
 /// White balance of the RGB outputs (`flashraw_decode_options.white_balance`).
@@ -712,6 +714,7 @@ pub(crate) fn demosaic_from(v: i32) -> FfiResult<Demosaic> {
         1 => Demosaic::HalfSize,
         2 => Demosaic::EdgeAware,
         3 => Demosaic::Ahd,
+        4 => Demosaic::Auto,
         _ => return Err(FfiError::invalid(format!("unknown demosaic {v}"))),
     })
 }

@@ -286,7 +286,8 @@ impl<'a> FlashRaw<'a> {
     /// Sensor data this build cannot decode fails with [`Error::UnsupportedCompression`];
     /// with [`DecodeOptions::preview_fallback`], RGB outputs then return the embedded
     /// full-size preview instead (see [`FrameSource::Preview`]).
-    pub fn decode(&self, opts: DecodeOptions) -> Result<RawFrame> {
+    pub fn decode(&self, mut opts: DecodeOptions) -> Result<RawFrame> {
+        opts.demosaic = opts.demosaic.resolve(self.decoder.frame_info().cfa.as_ref());
         // One thread: run on the calling thread rather than on a one-worker pool, so the
         // decode keeps the caller's scheduling class (a lone pool worker may be placed on
         // an efficiency core).

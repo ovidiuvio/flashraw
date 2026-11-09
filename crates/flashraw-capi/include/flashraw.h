@@ -225,6 +225,10 @@ enum flashraw_demosaic
      * Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear). CPU only (the GPU backend decodes on the CPU for it).
      */
     FLASHRAW_DEMOSAIC_AHD = 3,
+    /**
+     * The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
+     */
+    FLASHRAW_DEMOSAIC_AUTO = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

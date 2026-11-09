@@ -539,7 +539,8 @@ class RawFile:
                 are never cropped by ``True``; ``"active"`` crops them to the active area.
             demosaic: ``"bilinear"`` (default), ``"half-size"`` (2x2 binning), ``"edge-aware"``
                 (Bayer and X-Trans: cleaner edges, several times slower; runs on the GPU backend too) or
-                ``"ahd"`` (Bayer, homogeneity-directed; CPU only) for RGB outputs.
+                ``"ahd"`` (Bayer, homogeneity-directed; CPU only) or ``"auto"`` (the best validated
+                algorithm for the sensor: edge-aware on Bayer and X-Trans) for RGB outputs.
             apply_opcodes: apply DNG opcode lists (bad pixels, gain maps...).
             corruption_policy: ``"recover"`` (default; zero-fill what is missing and report it
                 in :attr:`Frame.warnings`) or ``"strict"`` (raise :class:`CorruptFileError`).
