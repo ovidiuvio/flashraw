@@ -14,7 +14,9 @@
 //! The filters are least-squares fits to re-mosaicked training images and sum to one, so a
 //! flat field stays flat; they are trained by `tools/demosaic/edgeaware_train.py` (see
 //! `docs/design/edge-aware-demosaic.md` for the method and its provenance) and stored in
-//! `bayer.bin` / `xtrans.bin`.
+//! `bayer.bin` / `xtrans.bin`. The X-Trans filters are trained with a 5x5 support inside the
+//! 7x7 layout (the outer taps are zero and skipped): on held-out tiles they match the 7x7 fit
+//! and cost fewer multiplications; the Bayer filters use the full 7x7.
 //!
 //! 4. the colour differences R-G and B-G are cleaned, so that isolated coloured dots (the
 //!    main artefact of sparse red and blue sites) disappear and green (luminance) detail is

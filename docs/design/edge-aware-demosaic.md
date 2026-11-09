@@ -28,7 +28,10 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    hard choice, so there are no switching artefacts.
 3. **Interpolation.** Each missing colour is `sum_d w_d * (F_d * mosaic)`, where `F_d` is a 7x7 filter chosen by
    CFA position (4 for Bayer, 36 for X-Trans), colour and direction. The measured colour is kept as is. Every
-   filter sums to one, so a flat field stays flat.
+   filter sums to one, so a flat field stays flat. The X-Trans filters (and their `G0` filters) are trained with a
+   5x5 support inside the 7x7 layout, so their outer taps are zero and skipped: on the held-out tiles they score
+   41.92 / 39.20 dB clean against 41.89 / 39.14 for the 7x7 fit and the same under noise, with fewer
+   multiplications. Bayer keeps the 7x7 support, whose 5x5 fit loses 0.05 / 0.11 dB on clean tiles.
 4. **False-colour suppression.** Isolated coloured dots go; green (luminance) detail and the measured samples are
    untouched. Bayer, two passes: each missing red or blue is the green plus the weighted mean of the differences
    `R - G` (or `B - G`) measured at the red (blue) sites of the 3x3 window, a site weighing `1 / (1 + e^2)` with
