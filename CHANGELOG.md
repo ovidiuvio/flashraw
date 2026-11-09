@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `Demosaic::Ahd` (`ahd` in the CLI, Python, JavaScript and C, `FLASHRAW_DEMOSAIC_AHD`): homogeneity-directed
+  interpolation (Hirakawa and Parks) for Bayer sensors, written from the paper; other sensors use the edge-aware
+  demosaic where it exists. On ground-truth tiles it scores within 0.05 dB of a widely used implementation of the
+  method (`docs/benchmarks.md`), and on real files its colour speckle index is 1.62 (edge-aware 2.09). CPU only (the GPU backend decodes
+  on the CPU for it); bit-identical for any thread count, band or crop. The compat layer maps `user_qual` 3 to it.
+  Method and numbers: `docs/design/ahd-demosaic.md`, `docs/benchmarks.md`.
+- `Highlights::Reconstruct` caps its prediction at 1.5 times the clipped value of the channel: the global model could
+  overshoot where a clipped area is unlike the rest of the frame (a simulation on 26 real crops: worst case against
+  plain clipping +0.067 to +0.010 in log error, mean 0.0517 to 0.0484, plain clipping 0.0561).
+
 - Noise level and more white balance controls. `DecodeOptions::noise_reduction` (`--noise-reduction`, `noise_reduction=`,
   `noiseReduction`, `flashraw_decode_options.noise_reduction`): `auto` (the default, as before), `off`, `low`, `medium`,
   `high` set the smoothing of `Demosaic::EdgeAware` (levels are floors on the weight estimated from the frame's noise).

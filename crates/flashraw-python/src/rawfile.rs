@@ -326,7 +326,7 @@ impl RawFile {
         let be = Backend::parse(backend)
             .ok_or_else(|| invalid(py, format!("unknown backend {backend:?} (expected auto, cpu, simd or gpu)")))?;
         let dm = Demosaic::parse(demosaic).ok_or_else(|| {
-            invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size or edge-aware)"))
+            invalid(py, format!("unknown demosaic {demosaic:?} (expected bilinear, half-size, edge-aware or ahd)"))
         })?;
         let hl = Highlights::parse(highlights).ok_or_else(|| {
             invalid(py, format!("unknown highlights {highlights:?} (expected clip, neutral, blend or reconstruct)"))

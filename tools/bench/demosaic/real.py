@@ -34,7 +34,7 @@ for cfa, files, lr in (('bayer',BAYER,LRB),('xtrans',XT,LRX)):
         try:
             meta = json.loads(subprocess.run([FR,'verify',p],check=True,capture_output=True).stdout)
             outs = {}
-            for name, mode in (('FlashRaw bilinear','bilinear'),('FlashRaw edge-aware','edge-aware')):
+            for name, mode in (('FlashRaw bilinear','bilinear'),('FlashRaw edge-aware','edge-aware'))+((('FlashRaw AHD','ahd'),) if cfa == 'bayer' else ()):
                 ppm = f'{WORK}/o.ppm'
                 subprocess.run([FR,'decode','--output','rgb16','--demosaic',mode,p,ppm],check=True,capture_output=True)
                 outs[name] = read_ppm(ppm)

@@ -848,6 +848,7 @@ and the colour error). Noise is added to the mosaic before development (variance
 |---|---:|---:|---:|
 | FlashRaw bilinear | 42.43 / 39.24 | 37.03 / 35.55 | 33.30 / 32.41 |
 | **FlashRaw edge-aware** | 42.04 / 39.43 | 37.67 / 36.16 | 34.40 / 33.40 |
+| **FlashRaw AHD** | 41.51 / 38.87 | 34.97 / 33.99 | 30.95 / 30.42 |
 | LibRaw AHD | 41.53 / 38.91 | 34.95 / 33.99 | 30.93 / 30.42 |
 | LibRaw PPG | 41.54 / 38.99 | 35.04 / 34.06 | 31.04 / 30.50 |
 | LibRaw DCB | 41.82 / 39.30 | 35.36 / 34.40 | 31.36 / 30.86 |
@@ -877,6 +878,7 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
 | **FlashRaw edge-aware** | 2.09 | 2.20 |
+| **FlashRaw AHD** (Bayer only) | 1.62 | |
 | LibRaw linear (bilinear) | 5.14 | 4.26 |
 | LibRaw PPG | 1.95 | |
 | LibRaw DCB | 2.10 | |
@@ -887,7 +889,11 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | LibRaw Markesteijn 1-pass / 3-pass | | 2.02 / 2.01 |
 
 FlashRaw edge-aware is far cleaner than any bilinear, matches LibRaw DCB on Bayer, and is 0.2 behind Markesteijn on X-Trans. The
-LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1).
+LibRaw AHD, DHT and AAHD demosaics are cleaner on Bayer (1.5 vs 2.1); FlashRaw's own homogeneity-directed demosaic
+(`Demosaic::Ahd`, [design note](design/ahd-demosaic.md)) closes that gap: on the 11 files that have LibRaw columns it scores 1.53 against 1.57
+for LibRaw AHD (edge-aware 1.97), and its fine-detail index is 0.0188 against 0.0189. It is the same published method, so the
+ground-truth numbers agree to 0.05 dB; it is further from the truth than edge-aware on clean and especially on noisy tiles
+(it keeps the noise as detail), so `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error.
 
 **Speed.** The post-process stage (demosaic, white balance, colour matrix, 8-bit encoding) of an 18 MP Bayer file (Canon EOS Rebel T2i) and a
 40 MP X-Trans file (Fujifilm X-T50) on the Linux x86-64 machine of this page (16 cores), LibRaw through rawpy

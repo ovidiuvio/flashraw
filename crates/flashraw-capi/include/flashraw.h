@@ -221,6 +221,10 @@ enum flashraw_demosaic
      * times slower than bilinear, far fewer artefacts; also runs on the GPU backend.
      */
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
+    /**
+     * Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear). CPU only (the GPU backend decodes on the CPU for it).
+     */
+    FLASHRAW_DEMOSAIC_AHD = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

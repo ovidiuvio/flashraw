@@ -152,10 +152,12 @@ pub fn dcraw_process(d: &mut libraw_data_t, st: &mut State) -> c_int {
         float_max: None,
     };
     // `half_size` bins; an explicit interpolation quality (`user_qual` 1 or more: VNG, PPG, AHD,
-    // DCB, DHT, AAHD, Markesteijn) selects FlashRaw's edge-aware demosaic; the default (-1) and
+    // DCB, DHT, AAHD, Markesteijn) selects FlashRaw's edge-aware demosaic (3, AHD, its homogeneity-directed one); the default (-1) and
     // quality 0 stay bilinear.
     let demosaic = if d.params.half_size != 0 && cfa.filters != 0 {
         Demosaic::HalfSize
+    } else if d.params.user_qual == 3 {
+        Demosaic::Ahd
     } else if d.params.user_qual >= 1 {
         Demosaic::EdgeAware
     } else {

@@ -235,9 +235,10 @@ pub fn parse_decode_request(s: &str) -> ApiResult<(DecodeOptions, String, ApiExt
             "bilinear" => Demosaic::Bilinear,
             "half" | "half-size" | "halfsize" => Demosaic::HalfSize,
             "edge-aware" | "edgeaware" | "edge_aware" => Demosaic::EdgeAware,
+            "ahd" => Demosaic::Ahd,
             _ => {
                 return Err(ApiError::invalid(format!(
-                    "unknown demosaic {d:?} (expected bilinear, half-size or edge-aware)"
+                    "unknown demosaic {d:?} (expected bilinear, half-size, edge-aware or ahd)"
                 )));
             }
         };

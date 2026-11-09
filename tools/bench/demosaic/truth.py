@@ -12,6 +12,7 @@ ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--flashraw', required=True, help='flashraw CLI binary (build it with held-out tables for an unbiased run)')
 ap.add_argument('--gt', required=True, help='ground-truth tiles from edgeaware_train.py gt')
 ap.add_argument('--work', required=True); ap.add_argument('--out', required=True)
+ap.add_argument('--only', help='run only the methods whose name contains this text (merge the result into an earlier run)')
 A = ap.parse_args()
 FR_HO = A.flashraw; WORK = A.work; OUT = A.out
 PAD = 80
@@ -33,7 +34,7 @@ def cdm(m, kind):
     f = {'malvar': cd.demosaicing_CFA_Bayer_Malvar2004, 'menon': cd.demosaicing_CFA_Bayer_Menon2007, 'ddfapd': cd.demosaicing_CFA_Bayer_DDFAPD}[kind]
     return f(m, 'RGGB').astype(np.float32)
 METHODS = {
- 'bayer': [('FlashRaw bilinear', 'fr', 'bilinear'), ('FlashRaw edge-aware', 'fr', 'edge-aware'),
+ 'bayer': [('FlashRaw bilinear', 'fr', 'bilinear'), ('FlashRaw edge-aware', 'fr', 'edge-aware'), ('FlashRaw AHD', 'fr', 'ahd'),
            ('LibRaw linear', 'lr', 0), ('LibRaw VNG', 'lr', 1), ('LibRaw PPG', 'lr', 2), ('LibRaw AHD', 'lr', 3), ('LibRaw DCB', 'lr', 4), ('LibRaw DHT', 'lr', 11), ('LibRaw AAHD', 'lr', 12),
            ('OpenCV bilinear', 'cv', 'bilinear'), ('OpenCV VNG', 'cv', 'vng'), ('OpenCV edge-aware', 'cv', 'ea'),
            ('colour-demosaicing Malvar', 'cd', 'malvar'), ('colour-demosaicing Menon', 'cd', 'menon'), ('colour-demosaicing DDFAPD', 'cd', 'ddfapd')],
@@ -63,6 +64,7 @@ for ti, g0 in enumerate(tiles):
             ref = g0
             crop = lambda o: o[PAD:-PAD, PAD:-PAD]
             for name, lib, arg in METHODS[pname]:
+                if A.only and A.only not in name: continue
                 t0 = time.time()
                 try:
                     if lib == 'fr': o = flashraw(path, arg)
