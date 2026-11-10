@@ -37,9 +37,22 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    `R - G` (or `B - G`) measured at the red (blue) sites of the 3x3 window, a site weighing `1 / (1 + e^2)` with
    `e = (G_site - G) / s` and `s = 0.2 G + 0.015` (on the white-balanced, normalised mosaic), so that colour does
    not leak across a luminance edge; then the same over the differences of every pixel of the 3x3 window (measured
-   and pass-1 values) with `s = 0.1 G + 0.007`. X-Trans: `R - G` and `B - G` are replaced by their 3x3 median (the
-   usual colour-difference median of classical demosaics). Both cost some colour resolution at fine saturated
-   edges. Choosing the Bayer stage: a 3x3 median on the full differences left the real-file speckle at 2.99 on the
+   and pass-1 values) with `s = 0.1 G + 0.007`. X-Trans, two passes as well: pass 1 replaces the `R - G` and
+   `B - G` of the filtered planes by their 3x3 median (the usual colour-difference median of classical demosaics),
+   pass 2 is the Bayer pass 2. Both cost some colour resolution at fine saturated edges.
+
+   Choosing the X-Trans stage (held-out photo tiles: PSNR / edge PSNR clean, PSNR at moderate and high noise; then
+   the real-file speckle index below over 10 X-Trans files). With the shipped 5x5 filters the median alone scored
+   41.92 / 39.20, 37.63, 34.43 and 2.18; median then pass 2 scores 42.00 / 39.37, 37.69, 34.51 and 1.84, better on
+   every measure. The alternatives were tried with the earlier 7x7 filters, whose median scored 41.89 / 39.14, 37.64,
+   34.44 and 2.20: the Bayer stage on X-Trans (pass 1 from the measured sites) 41.73 / 39.08, 37.38, 34.12 and 1.61,
+   lower PSNR because on X-Trans the trained filters estimate the missing colours better than a local mean of
+   measured sites; pass 2 alone on the filtered differences 42.05 / 39.41, 37.99, 35.05 but 2.15; median then pass 2
+   41.98 / 39.33, 37.70, 34.51 and 1.86. Its gate width matters little (half to four times `s`: 42.01 to 41.89 dB
+   clean, speckle 1.90 to 1.84). A 3x3 median between the two Bayer passes, or either X-Trans stage on Bayer, raised
+   the Bayer speckle from 2.09 to between 2.4 and 3.0 (pass 2 alone on Bayer: +0.17 dB clean, +0.74 dB at high noise,
+   speckle 2.96),
+   so Bayer keeps its stage. Choosing the Bayer stage: a 3x3 median on the full differences left the real-file speckle at 2.99 on the
    index below; a single gated pass of measured differences brought it to 2.08 but gave back 0.1 to 0.7 dB of
    photo edge PSNR (it discards the filters' own estimate); the second pass over all pixels gets 1.98 and brings
    the PSNR back, 0.8 dB above the median on synthetic edges.
@@ -53,7 +66,7 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    recovers that (on the tiles: +0.6 dB at moderate and +1.1 dB at high noise over bilinear, nothing on clean
    frames; on X-Trans +1.0 dB at moderate and +1.4 dB at high noise). On X-Trans the noise estimate also uses adjacent green pairs.
 
-Support is 8 pixels around each output pixel on Bayer (3 for the filter, 2 for the weights' gradients, 2 for the chroma passes, 1 for the smoothing; 7 on X-Trans, whose median is one pass), 8 in both cases in the code.
+Support is 8 pixels around each output pixel (3 for the filter, 2 for the weights' gradients, 2 for the chroma passes, 1 for the smoothing).
 The develop runs in bands of 32 output rows plus that halo, so memory stays bounded for any size (a few MB per
 thread), and every pixel is computed by the same operations in the same order whatever the band, thread count,
 crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). Pixels
@@ -107,7 +120,7 @@ PSNR against clean references understates the main effect, which is the removal 
 zipper patterns (step 4 trades a little fidelity for that: without it Bayer clean would be 37.7 over all pixels and
 X-Trans 37.95 / 32.3). On the file of issue #3 (Fujifilm X-T50, DSCF0120.RAF) the chroma high-frequency index of the
 issue (mean Laplacian of R-G and B-G over the Laplacian of luma, of the sRGB-encoded 16-bit output) goes from
-4.29 with bilinear to 2.25.
+4.29 with bilinear to 1.83 (2.24 with the earlier one-pass median X-Trans stage).
 
 ## Limits
 

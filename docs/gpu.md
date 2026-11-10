@@ -138,8 +138,8 @@ scratch buffer and the filter tables) has one entry point per stage:
 | `edge_mosaic` | source samples (unpack, linearise, normalise as in `develop`) | white balanced mosaic, clipped at 1 |
 | `edge_g0` | mosaic (7x7, workgroup memory) | `sqrt(G0)`, the first green estimate |
 | `edge_rgb` | mosaic, `sqrt(G0)` (3x3 gradients, workgroup memory) | the four-direction weights and the weighted sum of the 7x7 filters per missing colour: R, G, B |
-| `edge_bayer_d1`, `edge_bayer_v2` (Bayer) | R, G, B | the two luminance-gated colour-difference passes |
-| `edge_xtrans_v2` (X-Trans) | R, G, B | 3x3 median of R-G and B-G |
+| `edge_bayer_d1` (Bayer) or `edge_xtrans_d1` (X-Trans) | R, G, B | pass 1 of the colour differences R-G and B-G: the luminance-gated mean of the measured ones (Bayer) or the 3x3 median (X-Trans) |
+| `edge_bayer_v2` (both) | R, G, B, pass-1 differences | pass 2: the luminance-gated mean of the pass-1 differences |
 | `develop_edge` | cleaned RGB | optional smoothing, white balance of the border, matrix, levels, encoding, orientation: the existing `finish` |
 
 * **Filter tables** are uploaded once per CFA period (`GpuContext::edge_table`, ~95 KB for X-Trans) from the same

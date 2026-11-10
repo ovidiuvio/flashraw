@@ -66,7 +66,7 @@ pub(crate) enum Kernel {
     EdgeRgb,
     EdgeBayerD1,
     EdgeBayerV2,
-    EdgeXtransV2,
+    EdgeXtransD1,
     EdgeDevelop,
 }
 
@@ -79,7 +79,7 @@ impl Kernel {
                 | Kernel::EdgeRgb
                 | Kernel::EdgeBayerD1
                 | Kernel::EdgeBayerV2
-                | Kernel::EdgeXtransV2
+                | Kernel::EdgeXtransD1
                 | Kernel::EdgeDevelop
         )
     }
@@ -432,7 +432,7 @@ impl GpuContext {
             Kernel::EdgeRgb => "edge_rgb",
             Kernel::EdgeBayerD1 => "edge_bayer_d1",
             Kernel::EdgeBayerV2 => "edge_bayer_v2",
-            Kernel::EdgeXtransV2 => "edge_xtrans_v2",
+            Kernel::EdgeXtransD1 => "edge_xtrans_d1",
             Kernel::EdgeDevelop => "develop_edge",
         };
         let mut constants: Vec<(&str, f64)> = vec![

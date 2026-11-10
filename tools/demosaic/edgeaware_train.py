@@ -7,8 +7,10 @@ colour filter array (2x2 Bayer, 6x6 X-Trans). For every pixel
   2. the squared gradients of sqrt(G0) along four directions (horizontal, vertical and the
      two diagonals), summed over 3x3, give four weights w_d = 1 / (E_d + EPS)^2 (normalised),
   3. each missing colour is sum_d w_d * (7x7 filter_d applied to the mosaic),
-  4. Bayer: missing R and B = G + luminance-gated mean of the R-G / B-G of the 3x3 window, in two passes; X-Trans: R-G and B-G
-     replaced by their 3x3 median; measured samples kept (not trained, see `chroma_stage`).
+  4. missing R and B = G + a cleaned R-G / B-G, in two passes: pass 1 the luminance-gated mean of the measured
+     differences of the 3x3 window (Bayer) or the 3x3 median of the filtered differences (X-Trans), pass 2 the
+     luminance-gated mean of the pass-1 differences of the window; measured samples kept (not trained, see
+     `chroma_stage`).
 The filters are the least-squares solution (ridge regularised) that reconstructs ground truth
 images from their re-mosaicked version, with the weights held fixed, so everything stays one
 linear problem. No third-party code or tables are involved: the training images are
@@ -159,25 +161,14 @@ def train_pattern(images, pat, noises=NOISES):
     dirc = fit(images, pat, feat, D, noises=noises)
     return iso, dirc, feat
 
-def chroma_median(o, cm):
-    """X-Trans step 4: 3x3 median of the colour differences R-G and B-G (measured samples are kept)."""
+def chroma_two_pass(o, cm, xtrans):
+    """Step 4, two passes (mirrors Rust). Pass 1 for a missing R or B: Bayer, the mean of the measured differences
+    (R-G or B-G) at the R or B sites of the 3x3 window, a site weighing 1 / (1 + e^2) with
+    e = (G_site - G) / (0.2 G + 0.015); X-Trans, the 3x3 median of the differences of the filtered planes. Pass 2,
+    both: the same weighted mean over the pass-1 differences of every pixel of the window, with s = 0.1 G + 0.007.
+    Measured samples are kept."""
     G = o[..., 1]
     H, W = G.shape
-    def med(a):
-        p = np.pad(a, 1, mode='edge')
-        return np.median(np.stack([p[dy:dy + H, dx:dx + W] for dy in range(3) for dx in range(3)], 0), 0)
-    r = np.where(cm == 0, o[..., 0], G + med(o[..., 0] - G))
-    b = np.where(cm == 2, o[..., 2], G + med(o[..., 2] - G))
-    return np.stack([r, G, b], -1)
-
-def chroma_gated(o, cm):
-    """Bayer step 4, two passes (mirrors Rust). Pass 1: each missing R or B is G plus the mean of the measured
-    differences (R-G or B-G) at the R or B sites of the 3x3 window, a site weighing 1 / (1 + e^2) with
-    e = (G_site - G) / (0.2 G + 0.015). Pass 2: the same over the differences of every pixel of the window,
-    with s = 0.1 G + 0.007. Measured samples are kept."""
-    G = o[..., 1]
-    H, W = G.shape
-    pg = np.pad(G, 1, mode='edge')
     def window(a):
         p = np.pad(a, 1, mode='edge')
         return [p[dy:dy + H, dx:dx + W] for dy in range(3) for dx in range(3)]
@@ -189,15 +180,19 @@ def chroma_gated(o, cm):
     out = [o[..., 0], G, o[..., 2]]
     for ch in (0, 2):
         site = (cm == ch)
-        ps = window(site.astype(np.float32)); pd = window(np.where(site, o[..., ch] - G, 0.0))
-        sw = sum(w * s_ for w, s_ in zip(w1, ps)); sd = sum(w * s_ * d for w, s_, d in zip(w1, ps, pd))
-        d1 = np.where(site, o[..., ch] - G, sd / np.maximum(sw, 1e-12))
+        if xtrans:
+            mixed = np.median(np.stack(window(o[..., ch] - G), 0), 0)
+        else:
+            ps = window(site.astype(np.float32)); pd = window(np.where(site, o[..., ch] - G, 0.0))
+            sw = sum(w * s_ for w, s_ in zip(w1, ps)); sd = sum(w * s_ * d for w, s_, d in zip(w1, ps, pd))
+            mixed = sd / np.maximum(sw, 1e-12)
+        d1 = np.where(site, o[..., ch] - G, mixed)
         sw2 = sum(w2); sd2 = sum(w * d for w, d in zip(w2, window(d1)))
         out[ch] = np.where(site, o[..., ch], G + sd2 / sw2)
     return np.stack(out, -1)
 
 def chroma_stage(o, cm, pat):
-    return chroma_gated(o, cm) if pat.shape[0] == 2 else chroma_median(o, cm)
+    return chroma_two_pass(o, cm, pat.shape[0] != 2)
 
 def blob(pat, iso, dirc):
     P = pat.shape[0]

@@ -837,12 +837,8 @@ impl GpuContext {
                 let scratch_bytes = info_b.iter().map(|b| b.2).max().unwrap_or(16);
                 let mk = |kernel| self.pipeline(PipelineKey { kernel, ..key });
                 let mut passes = vec![mk(Kernel::EdgeMosaic), mk(Kernel::EdgeG0), mk(Kernel::EdgeRgb)];
-                if e.period == 2 {
-                    passes.push(mk(Kernel::EdgeBayerD1));
-                    passes.push(mk(Kernel::EdgeBayerV2));
-                } else {
-                    passes.push(mk(Kernel::EdgeXtransV2));
-                }
+                passes.push(mk(if e.period == 2 { Kernel::EdgeBayerD1 } else { Kernel::EdgeXtransD1 }));
+                passes.push(mk(Kernel::EdgeBayerV2));
                 Some(EdgeRun {
                     params: buffer_init(dev, "flashraw.edge_params", &bytes, wgpu::BufferUsages::UNIFORM),
                     stride,

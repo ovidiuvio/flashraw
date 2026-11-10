@@ -18,13 +18,14 @@
 //! 7x7 layout (the outer taps are zero and skipped): on held-out tiles they match the 7x7 fit
 //! and cost fewer multiplications; the Bayer filters use the full 7x7.
 //!
-//! 4. the colour differences R-G and B-G are cleaned, so that isolated coloured dots (the
-//!    main artefact of sparse red and blue sites) disappear and green (luminance) detail is
-//!    untouched. X-Trans: their 3x3 median. Bayer, two passes: each missing red or blue is
-//!    the green plus the weighted mean of the differences measured at the red or blue sites
-//!    of the 3x3 window, a site counting `1 / (1 + ((G_site - G) / s)^2)` with
-//!    `s = 0.2 G + 0.015`, so that colour does not leak across a luminance edge; then the
-//!    same over the differences of all pixels of the 3x3 window with `s = 0.1 G + 0.007`.
+//! 4. the colour differences R-G and B-G are cleaned in two passes, so that isolated
+//!    coloured dots (the main artefact of sparse red and blue sites) disappear and green
+//!    (luminance) detail is untouched. Pass 1 for a missing red or blue: Bayer, the green plus
+//!    the weighted mean of the differences measured at the red or blue sites of the 3x3
+//!    window, a site counting `1 / (1 + ((G_site - G) / s)^2)` with `s = 0.2 G + 0.015`, so
+//!    that colour does not leak across a luminance edge; X-Trans, the green plus the 3x3
+//!    median of the differences of the filtered planes. Pass 2, both: the same weighted mean
+//!    over the pass-1 differences of all pixels of the 3x3 window, with `s = 0.1 G + 0.007`.
 //! 5. On noisy frames: every channel of the pixel moves by `beta` towards the
 //!    mean of its 3x3 window, weighted as in step 4 with `s = 0.2 G + 0.015`. `beta` is 0 for
 //!    clean frames and up to 0.5 for noisy ones, from a noise estimate over 48 rows of the
@@ -50,8 +51,8 @@ const EPS: f32 = 1e-3;
 /// Mosaic samples needed around a pixel by the filters: the 7x7 filter reaches 3, and the
 /// weights need `G0` two pixels further (gradient, then 3x3 sum) which itself reaches 3.
 const CORE_HALO: usize = R + 2;
-/// Mosaic samples needed around a pixel: the filters, plus three on Bayer (two chroma passes
-/// and the noise smoothing; X-Trans needs one, for its median).
+/// Mosaic samples needed around a pixel: the filters, plus three (two chroma passes and the
+/// noise smoothing).
 pub(crate) const HALO: usize = CORE_HALO + 3;
 /// Output rows per band: bounds the working memory (a few MB at 8000 columns).
 pub(crate) const BAND_ROWS: usize = 64;
@@ -265,43 +266,8 @@ impl Plan {
         fetch: &mut dyn FnMut(usize, &mut [f32]),
         out: &mut [[f32; 3]],
     ) {
-        let (nr, nc) = (y1 - y0, xb - xa);
-        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w && out.len() == nr * nc);
-        if self.t.period == 2 {
-            return self.develop_bayer(w, (y0, y1), (xa, xb), wb, fetch, out);
-        }
-        // One pixel more on every side for the 3x3 medians, and `h` more for the smoothing.
-        let h = usize::from(self.beta > 0.0);
-        let m = 1 + h;
-        let (er, ec) = (nr + 2 * m, nc + 2 * m);
-        let mut rgb: [Vec<f32>; 3] = std::array::from_fn(|_| vec![0f32; er * ec]);
-        self.demosaic(w, (y0 - m, y1 + m), (xa - m, xb + m), wb, fetch, &mut rgb);
-        let t = self.t;
-        let p = t.period;
-        let [r, g, bl] = &rgb;
-        // Colour differences, then their 3x3 medians (rows of `e2c` values at a time).
-        let rg: Vec<f32> = r.iter().zip(g).map(|(a, b)| a - b).collect();
-        let bg: Vec<f32> = bl.iter().zip(g).map(|(a, b)| a - b).collect();
-        let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
-        let mut mr = vec![0f32; e2c];
-        let mut mb = vec![0f32; e2c];
-        let mut v2 = vec![[0f32; 3]; e2r * e2c];
-        for i in 0..e2r {
-            let cr = (y0 + i + self.cy + p - h) % p;
-            median_row(&rg, ec, i, &mut mr);
-            median_row(&bg, ec, i, &mut mb);
-            for j in 0..e2c {
-                let c = (i + 1) * ec + j + 1;
-                let own = t.canon[cr * p + (xa + j + self.cx + p - h) % p];
-                v2[i * e2c + j] =
-                    [if own == 0 { r[c] } else { g[c] + mr[j] }, g[c], if own == 2 { bl[c] } else { g[c] + mb[j] }];
-            }
-        }
-        if h == 0 {
-            out.copy_from_slice(&v2);
-        } else {
-            smooth(&v2, e2c, self.beta, nr, nc, out);
-        }
+        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w && out.len() == (y1 - y0) * (xb - xa));
+        self.develop_chroma(w, (y0, y1), (xa, xb), wb, fetch, out)
     }
 
     /// The plan in the form the GPU kernels take (`flashraw_gpu::EdgeSpec`): the tables, where
@@ -376,10 +342,10 @@ impl Plan {
         }
     }
 
-    /// Bayer: the filters, the two-pass luminance-gated chroma stage and, on a noisy frame, a
-    /// gated smoothing (module docs, steps 4 and 5). Same contract as [`Plan::develop`].
+    /// The filters, the two-pass chroma stage and, on a noisy frame, a gated smoothing (module
+    /// docs, steps 4 and 5). Same contract as [`Plan::develop`].
     #[inline(always)]
-    fn develop_bayer(
+    fn develop_chroma(
         &self,
         w: usize,
         (y0, y1): (usize, usize),
@@ -389,6 +355,7 @@ impl Plan {
         out: &mut [[f32; 3]],
     ) {
         let t = self.t;
+        let p = t.period;
         let (nr, nc) = (y1 - y0, xb - xa);
         // `h` extra pixels around the core for the smoothing pass; two for the chroma passes.
         let h = usize::from(self.beta > 0.0);
@@ -398,25 +365,42 @@ impl Plan {
         self.demosaic(w, (y0 - m, y1 + m), (xa - m, xb + m), wb, fetch, &mut rgb);
         let [r, g, bl] = &rgb;
         // Channel at plane position (iy, ix): the plane starts `m` pixels before (y0, xa).
-        let (py, px) = ((y0 + self.cy + m) % 2, (xa + self.cx + m) % 2);
+        let (py, px) = ((y0 - m + self.cy) % p, (xa - m + self.cx) % p);
         // Masks (1.0 or 0.0) per row kind and plane column: the sample is red / blue. They let
         // the loops below handle every pixel alike, over whole rows.
-        let mask = |ch: usize| -> [Vec<f32>; 2] {
-            std::array::from_fn(|rk| {
-                (0..ec).map(|x| if t.canon[rk * 2 + (x + px) % 2] as usize == ch { 1.0 } else { 0.0 }).collect()
-            })
+        let mask = |ch: usize| -> Vec<Vec<f32>> {
+            (0..p)
+                .map(|rk| {
+                    (0..ec).map(|x| if t.canon[rk * p + (x + px) % p] as usize == ch { 1.0 } else { 0.0 }).collect()
+                })
+                .collect()
         };
         let masks = [mask(0), mask(2)];
         // Pass 1, over the core plus `1 + h` pixels: green plus the gated mean of the measured
-        // differences of the 3x3 window. `d1[ch / 2]` holds the colour difference (R-G, B-G).
+        // differences of the 3x3 window (Bayer) or the median of the filtered differences
+        // (X-Trans). `d1[ch / 2]` holds the colour difference (R-G, B-G).
         let (e1r, e1c) = (nr + 2 + 2 * h, nc + 2 + 2 * h);
         let mut d1 = [vec![0f32; e1r * e1c], vec![0f32; e1r * e1c]];
         let planes = [r, bl];
+        if p != 2 {
+            let mut med = vec![0f32; e1c];
+            for (cc, pl) in planes.iter().enumerate() {
+                let df: Vec<f32> = pl.iter().zip(g).map(|(a, b)| a - b).collect();
+                for i in 0..e1r {
+                    median_row(&df, ec, i, &mut med);
+                    let own = &masks[cc][(i + 1 + py) % p][1..1 + e1c];
+                    let dc = &df[(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
+                    for (j, o) in d1[cc][i * e1c..(i + 1) * e1c].iter_mut().enumerate() {
+                        *o = if own[j] != 0.0 { dc[j] } else { med[j] };
+                    }
+                }
+            }
+        }
         let mut inv = vec![0f32; e1c];
         let mut wtv = vec![0f32; e1c];
         // Per colour, the sums over its sites: weights, weighted differences, differences, count.
         let mut acc: [[Vec<f32>; 4]; 2] = std::array::from_fn(|_| std::array::from_fn(|_| vec![0f32; e1c]));
-        for i in 0..e1r {
+        for i in (0..e1r).filter(|_| p == 2) {
             let gc = &g[(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
             for (v, &x) in inv.iter_mut().zip(gc) {
                 *v = 1.0 / (0.2 * x.max(0.0) + 0.015);
@@ -425,7 +409,7 @@ impl Plan {
                 a.fill(0.0);
             }
             for dy in 0..3 {
-                let rk = (i + dy + py) % 2;
+                let rk = (i + dy + py) % p;
                 for dx in 0..3 {
                     let k0 = (i + dy) * ec + dx;
                     let gk = &g[k0..k0 + e1c];
@@ -450,7 +434,7 @@ impl Plan {
                     }
                 }
             }
-            let rk = (i + 1 + py) % 2;
+            let rk = (i + 1 + py) % p;
             for cc in 0..2 {
                 let own = &masks[cc][rk][1..1 + e1c];
                 let pc = &planes[cc][(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
@@ -494,7 +478,7 @@ impl Plan {
                     }
                 }
             }
-            let rk = (i + 2 + py) % 2;
+            let rk = (i + 2 + py) % p;
             let (own_r, own_b) = (&masks[0][rk][2..2 + e2c], &masks[1][rk][2..2 + e2c]);
             let (rc, bc) = (&r[c0..c0 + e2c], &bl[c0..c0 + e2c]);
             let o = &mut v2[i * e2c..(i + 1) * e2c];
@@ -695,8 +679,6 @@ impl Plan {
     }
 }
 
-/// Medians of the 3x3 neighbourhoods of row `i + 1` of `a` (`ec` wide), for the columns
-/// `1..ec - 1`, into `out`.
 /// Smoothing (module docs, step 5): each pixel of the `nr` x `nc` core of `v` (rows of `ec`
 /// pixels, one pixel of margin on every side) moves by `beta` towards the mean of its 3x3
 /// window, a neighbour weighing `1 / (1 + e^2)` with `e = (G_neighbour - G) / (0.2 G + 0.015)`.
@@ -723,6 +705,8 @@ fn smooth(v: &[[f32; 3]], ec: usize, beta: f32, nr: usize, nc: usize, out: &mut 
     }
 }
 
+/// Medians of the 3x3 neighbourhoods of row `i + 1` of `a` (`ec` wide), for the columns
+/// `1..out.len() + 1`, into `out`.
 fn median_row(a: &[f32], ec: usize, i: usize, out: &mut [f32]) {
     let n = out.len();
     let r0 = &a[i * ec..(i + 1) * ec];

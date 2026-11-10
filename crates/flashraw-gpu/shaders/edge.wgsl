@@ -10,8 +10,8 @@
 //   plane 0     M   white balanced mosaic, clipped at 1                (edge_mosaic)
 //   plane 1     G0  sqrt of the first green estimate                   (edge_g0)
 //   planes 2-4  RGB the directionally weighted 7x7 filters             (edge_rgb)
-//   planes 0-1  D1  Bayer: colour differences R-G, B-G, pass 1         (edge_bayer_d1; reuses M, G0)
-//   planes 5-7  V2  cleaned RGB                                        (edge_bayer_v2 / edge_xtrans_v2)
+//   planes 0-1  D1  colour differences R-G, B-G, pass 1                (edge_bayer_d1 / edge_xtrans_d1; reuses M, G0)
+//   planes 5-7  V2  cleaned RGB, pass 2                                (edge_bayer_v2, both sensors)
 //
 // then `develop_edge` smooths (noisy frames), applies the matrix and encodes. Pixels closer than
 // `halo` to the frame border are bilinear, like the CPU. The order of the floating-point
@@ -210,9 +210,9 @@ fn edge_rgb(
     S[(2u + own) * E.n + idx] = tm[(l.y + 3u) * 22u + l.x + 3u];
 }
 
-// ---- 4. Bayer chroma: two luminance-gated passes -------------------------------------------
+// ---- 4. Chroma: two passes ----------------------------------------------------------------
 
-// Pass 1: green plus the gated mean of the measured differences of the 3x3 window.
+// Pass 1, Bayer: green plus the gated mean of the measured differences of the 3x3 window.
 @compute @workgroup_size(16, 16)
 fn edge_bayer_d1(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= E.ew || gid.y >= E.eh) {
@@ -262,8 +262,8 @@ fn edge_bayer_d1(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
 }
 
-// Pass 2: the same gate over the differences of every pixel, for the two colours the pixel does
-// not measure.
+// Pass 2, Bayer and X-Trans: the same gate over the pass-1 differences of every pixel, for the
+// two colours the pixel does not measure.
 @compute @workgroup_size(16, 16)
 fn edge_bayer_v2(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= E.ew || gid.y >= E.eh) {
@@ -309,7 +309,7 @@ fn edge_bayer_v2(@builtin(global_invocation_id) gid: vec3<u32>) {
     S[7u * E.n + idx] = v.z;
 }
 
-// ---- 5. X-Trans chroma: 3x3 median of the colour differences ------------------------------
+// ---- 5. X-Trans chroma pass 1: 3x3 median of the colour differences -----------------------
 
 fn cas(p: ptr<function, array<f32, 9>>, a: i32, b: i32) {
     let lo = min((*p)[a], (*p)[b]);
@@ -343,8 +343,10 @@ fn median9(v: array<f32, 9>) -> f32 {
     return p[4];
 }
 
+// Pass 1, X-Trans: the measured difference, or the 3x3 median of the differences of the filtered
+// planes; pass 2 is `edge_bayer_v2`.
 @compute @workgroup_size(16, 16)
-fn edge_xtrans_v2(@builtin(global_invocation_id) gid: vec3<u32>) {
+fn edge_xtrans_d1(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= E.ew || gid.y >= E.eh) {
         return;
     }
@@ -368,9 +370,8 @@ fn edge_xtrans_v2(@builtin(global_invocation_id) gid: vec3<u32>) {
         bg[k] = b;
     }
     let g = sp(3u, idx);
-    S[5u * E.n + idx] = select(g + median9(rg), sp(2u, idx), own == 0u);
-    S[6u * E.n + idx] = g;
-    S[7u * E.n + idx] = select(g + median9(bg), sp(4u, idx), own == 2u);
+    S[idx] = select(median9(rg), sp(2u, idx) - g, own == 0u);
+    S[E.n + idx] = select(median9(bg), sp(4u, idx) - g, own == 2u);
 }
 
 // ---- 6. Smoothing, border pixels, colour conversion, encoding ------------------------------
