@@ -58,6 +58,22 @@ impl Plan {
     /// (`(y1 - y0) * (xb - xa)` RGB pixels, white balanced by `wb`). Needs `HALO <= y0`,
     /// `y1 + HALO <= height`, `HALO <= xa`, `xb + HALO <= w`. `fetch(y, row)` fills `row` with
     /// the normalised mosaic row `y`.
+    /// [`Plan::develop`] handing the band over as one chunk (`emit(0, xb - xa, pixels)`), the
+    /// interface of the demosaics that work in column chunks.
+    pub(crate) fn develop_chunks(
+        &self,
+        w: usize,
+        rows: (usize, usize),
+        cols: (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut crate::process::PixelSink<'_>,
+    ) {
+        let mut buf = vec![[0f32; 3]; (rows.1 - rows.0) * (cols.1 - cols.0)];
+        self.develop(w, rows, cols, wb, fetch, &mut buf);
+        out(0, cols.1 - cols.0, &buf);
+    }
+
     pub(crate) fn develop(
         &self,
         w: usize,

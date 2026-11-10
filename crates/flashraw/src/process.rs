@@ -700,6 +700,65 @@ pub(crate) fn finish_rgb(
     o
 }
 
+/// [`finish_rgb`] of `src` (each pixel scaled by `k` first, unit white balance) into `dst`.
+/// Compiled a second time for AVX2 on x86-64 (no FMA: the same operations in the same order, so
+/// the same result).
+fn finish_run(
+    src: &[[f32; 3]],
+    dst: &mut [[f32; 3]],
+    k: [f32; 3],
+    m: &[[f32; 3]; 3],
+    levels: Option<Levels>,
+    highlights: Highlights,
+    recon: &ReconModel,
+) {
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    if std::arch::is_x86_feature_detected!("avx2") {
+        // SAFETY: the CPU supports AVX2 (checked above).
+        return unsafe { finish_run_avx2(src, dst, k, m, levels, highlights, recon) };
+    }
+    finish_run_impl(src, dst, k, m, levels, highlights, recon)
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn finish_run_avx2(
+    src: &[[f32; 3]],
+    dst: &mut [[f32; 3]],
+    k: [f32; 3],
+    m: &[[f32; 3]; 3],
+    levels: Option<Levels>,
+    highlights: Highlights,
+    recon: &ReconModel,
+) {
+    finish_run_impl(src, dst, k, m, levels, highlights, recon)
+}
+
+#[inline(always)]
+fn finish_run_impl(
+    src: &[[f32; 3]],
+    dst: &mut [[f32; 3]],
+    k: [f32; 3],
+    m: &[[f32; 3]; 3],
+    levels: Option<Levels>,
+    highlights: Highlights,
+    recon: &ReconModel,
+) {
+    // One loop per highlight mode and levels setting, so the common one (clip, no levels) is a
+    // straight-line loop the compiler vectorises.
+    macro_rules! run {
+        ($h:expr, $l:expr) => {
+            for (d, s) in dst.iter_mut().zip(src) {
+                *d = finish_rgb([s[0] * k[0], s[1] * k[1], s[2] * k[2]], &[1.0; 4], m, $l, $h, recon);
+            }
+        };
+    }
+    match (highlights, levels) {
+        (Highlights::Clip, None) => run!(Highlights::Clip, None),
+        _ => run!(highlights, levels),
+    }
+}
+
 /// Sample encoding of an RGB output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RgbEncoding {
@@ -742,6 +801,10 @@ pub struct Developed {
 
 /// Rows per destination strip processed by one task.
 const STRIP: u32 = 16;
+
+/// Receiver of developed pixels: `(a, b, pixels)`, whose meaning the caller documents
+/// (a column chunk of a band, or a run of a strip row).
+pub(crate) type PixelSink<'a> = dyn FnMut(usize, usize, &[[f32; 3]]) + 'a;
 
 /// Same-colour neighbour offsets `(dx, dy)` and the reciprocal of their count.
 type NeighbourList = (Vec<(isize, isize)>, f32);
@@ -907,7 +970,33 @@ impl Kernel<'_> {
             let y0 = self.crop.y as usize + oy * 2;
             let r0 = cache.get(self, y0);
             let r1 = if y0 + 1 < h { Some(cache.get(self, y0 + 1)) } else { None };
-            for (i, o) in out.iter_mut().enumerate() {
+            // Single-component CFA rows: the colours of the 2x2 block are the same for every
+            // output pixel of a row when the pattern is 2x2 (`x0` steps by 2). Interior pixels
+            // take this path, with the same sums in the same order as the general loop below.
+            let fast = cpp == 1 && self.cfa.is_some_and(|p| p.width() == 2 && p.height() == 2) && r1.is_some();
+            let mut done = 0;
+            if fast {
+                let x0 = self.crop.x as usize;
+                let c4 = [color(x0, y0), color(x0 + 1, y0), color(x0, y0 + 1), color(x0 + 1, y0 + 1)];
+                let (a, b) = (&cache.rows[r0].1, &cache.rows[r1.unwrap()].1);
+                let n = out.len().min((w - x0) / 2);
+                for (i, o) in out[..n].iter_mut().enumerate() {
+                    let x = x0 + i * 2;
+                    let mut acc = [0f32; 4];
+                    let mut cnt = [0f32; 4];
+                    for (k, v) in [a[x], a[x + 1], b[x], b[x + 1]].into_iter().enumerate() {
+                        acc[c4[k]] += v;
+                        cnt[c4[k]] += 1.0;
+                    }
+                    let mut rgb = [0f32; 4];
+                    for c in 0..nch {
+                        rgb[c] = if cnt[c] > 0.0 { acc[c] / cnt[c] } else { 0.0 };
+                    }
+                    *o = self.finish_n(rgb);
+                }
+                done = n;
+            }
+            for (i, o) in out.iter_mut().enumerate().skip(done) {
                 let x0 = self.crop.x as usize + i * 2;
                 let mut acc = [0f32; 4];
                 let mut n = [0f32; 4];
@@ -1052,17 +1141,36 @@ impl Kernel<'_> {
     /// output pixel). The edge-aware demosaic handles the pixels at least
     /// [`edgeaware::HALO`] away from the frame border; the others are bilinear.
     fn strip(&self, cache: &mut RowCache, first: usize, count: usize, out: &mut [[f32; 3]]) {
-        let w = self.img.width as usize;
         let ow = out.len() / count.max(1);
+        self.strip_to(cache, first, count, ow, &mut |i, x0, px| {
+            out[i * ow + x0..i * ow + x0 + px.len()].copy_from_slice(px);
+        });
+    }
+
+    /// [`Kernel::strip`] handing the finished pixels to `sink(i, x0, pixels)`: output row
+    /// `first + i`, output columns `x0..x0 + pixels.len()`; every pixel of the `ow`-wide strip
+    /// exactly once. The demosaics that work in column chunks hand them over chunk by chunk,
+    /// so a strip is never held whole (a band across a large frame does not fit in cache).
+    fn strip_to(
+        &self,
+        cache: &mut RowCache,
+        first: usize,
+        count: usize,
+        ow: usize,
+        sink: &mut crate::process::PixelSink<'_>,
+    ) {
+        let w = self.img.width as usize;
         let halo = match (&self.edge, &self.ahd, &self.alt) {
             (Some(_), _, _) => edgeaware::HALO,
             (None, Some(_), _) => ahd::HALO,
             (None, None, Some(_)) => bayer_alt::HALO,
             (None, None, None) => 0,
         };
+        let mut row = vec![[0f32; 3]; ow];
         if halo == 0 {
-            for (i, r) in out.chunks_exact_mut(ow).enumerate() {
-                self.row(cache, first + i, r);
+            for i in 0..count {
+                self.row(cache, first + i, &mut row);
+                sink(i, 0, &row);
             }
             return;
         }
@@ -1074,41 +1182,38 @@ impl Kernel<'_> {
         // Output rows (of this strip) far enough from the top / bottom.
         let lo = halo.saturating_sub(cy).clamp(first, first + count);
         let hi = h.saturating_sub(halo).saturating_sub(cy).clamp(lo, first + count);
-        for (i, r) in out.chunks_exact_mut(ow).enumerate() {
+        for i in 0..count {
             let oy = first + i;
             if oy >= lo && oy < hi && ib > ia {
-                self.row_cols(cache, oy, r, ia..ib);
+                self.row_cols(cache, oy, &mut row, ia..ib);
+                sink(i, 0, &row[..ia]);
+                sink(i, ib, &row[ib..]);
             } else {
-                self.row(cache, oy, r);
+                self.row(cache, oy, &mut row);
+                sink(i, 0, &row);
             }
         }
         if hi > lo && ib > ia {
             let (y0, y1, xa, xb) = (cy + lo, cy + hi, cx + ia, cx + ib);
-            let mut buf = vec![[0f32; 3]; (y1 - y0) * (xb - xa)];
             let mut fetch = |y: usize, row: &mut [f32]| match self.source {
                 Some(f) => f(y, row),
                 None => self.normalize_row(y, row),
             };
-            match (&self.edge, &self.ahd, &self.alt) {
-                (Some(p), _, _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
-                (None, Some(p), _) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
-                (None, None, Some(p)) => p.develop(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut buf),
-                (None, None, None) => unreachable!("halo > 0 needs a plan"),
-            }
             // Back to this kernel's balance (1 unless it develops unbalanced camera RGB).
             let k = [0, 1, 2].map(|c| self.wb[c] / self.dm_wb[c]);
-            for (n, src) in buf.chunks_exact(xb - xa).enumerate() {
-                let dst = &mut out[(lo - first + n) * ow + ia..(lo - first + n) * ow + ib];
-                for (d, s) in dst.iter_mut().zip(src) {
-                    *d = finish_rgb(
-                        [s[0] * k[0], s[1] * k[1], s[2] * k[2]],
-                        &[1.0; 4],
-                        &self.m,
-                        self.levels,
-                        self.highlights,
-                        &self.recon,
-                    );
+            let mut fin: Vec<[f32; 3]> = Vec::new();
+            let mut emit = |c0: usize, cw: usize, px: &[[f32; 3]]| {
+                fin.resize(px.len(), [0.0; 3]);
+                finish_run(px, &mut fin, k, &self.m, self.levels, self.highlights, &self.recon);
+                for (n, r) in fin.chunks_exact(cw).enumerate() {
+                    sink(lo - first + n, ia + c0, r);
                 }
+            };
+            match (&self.edge, &self.ahd, &self.alt) {
+                (Some(p), _, _) => p.develop_chunks(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut emit),
+                (None, Some(p), _) => p.develop_chunks(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut emit),
+                (None, None, Some(p)) => p.develop_chunks(w, (y0, y1), (xa, xb), &self.dm_wb, &mut fetch, &mut emit),
+                (None, None, None) => unreachable!("halo > 0 needs a plan"),
             }
         }
     }
@@ -1318,20 +1423,9 @@ macro_rules! with_encoder8 {
     ($curve:expr, |$enc:ident| $body:expr) => {
         match tables8($curve) {
             // The sRGB curve keeps its original fixed-size table and constant scale.
-            _ if matches!($curve, OutputCurve::Srgb) => {
-                let $enc = Pixel(rgba8_encoder());
-                $body
-            }
+            // The sRGB curve (4096 segments, the `rgba8_encoder` table) and single-table curves.
             Tables::One(t) => {
-                let n = (t.len() - 1) as f32;
-                let $enc = Pixel(move |p: [f32; 3]| {
-                    [
-                        t[(p[0].clamp(0.0, 1.0) * n) as usize],
-                        t[(p[1].clamp(0.0, 1.0) * n) as usize],
-                        t[(p[2].clamp(0.0, 1.0) * n) as usize],
-                        255,
-                    ]
-                });
+                let $enc = Lut8(t);
                 $body
             }
             Tables::Each(t) => {
@@ -1386,11 +1480,9 @@ pub fn develop(
     par::for_each_row_chunk(&mut out, rl, k.strip_rows(), parallel, |first, chunk| {
         let mut cache = RowCache::new(img.width as usize * img.cpp as usize);
         let n = chunk.len() / rl;
-        let mut rgb = vec![[0f32; 3]; ow as usize * n];
-        k.strip(&mut cache, first, n, &mut rgb);
-        for (o, p) in chunk.chunks_exact_mut(3).zip(&rgb) {
-            o.copy_from_slice(p);
-        }
+        k.strip_to(&mut cache, first, n, ow as usize, &mut |i, x0, px| {
+            chunk[i * rl + x0 * 3..i * rl + (x0 + px.len()) * 3].copy_from_slice(px.as_flattened());
+        });
     });
     Ok(Developed { width: ow, height: oh, rgb: out })
 }
@@ -1560,6 +1652,61 @@ unsafe fn encode_samples_avx2<T>(f: &impl Fn(f32) -> T, src: &[f32], dst: &mut [
     encode_samples(f, src, dst)
 }
 
+/// The 8-bit encoder of one table shared by the three channels:
+/// `table[trunc(clamp(v, 0, 1) * (len - 1))]`, alpha 255. Runs are encoded in blocks: the table
+/// indices first (a loop that vectorises), then the table reads; the same operations per sample
+/// as the per-pixel form, so the same result.
+pub(crate) struct Lut8<'a>(pub &'a [u8]);
+
+impl Encode<u8, 4> for Lut8<'_> {
+    #[inline(always)]
+    fn px(&self, p: [f32; 3]) -> [u8; 4] {
+        let n = (self.0.len() - 1) as f32;
+        let t = self.0;
+        [
+            t[(p[0].clamp(0.0, 1.0) * n) as usize],
+            t[(p[1].clamp(0.0, 1.0) * n) as usize],
+            t[(p[2].clamp(0.0, 1.0) * n) as usize],
+            255,
+        ]
+    }
+    #[inline(always)]
+    fn run(&self, src: &[[f32; 3]], dst: &mut [u8]) {
+        let src = src.as_flattened();
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU supports AVX2 (checked above).
+            return unsafe { lut8_run_avx2(self.0, src, dst) };
+        }
+        lut8_run(self.0, src, dst)
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn lut8_run_avx2(lut: &[u8], src: &[f32], dst: &mut [u8]) {
+    lut8_run(lut, src, dst)
+}
+
+#[inline(always)]
+fn lut8_run(lut: &[u8], src: &[f32], dst: &mut [u8]) {
+    const B: usize = 96; // samples per block, a multiple of 3
+    let n = (lut.len() - 1) as f32;
+    let last = lut.len() - 1;
+    let mut idx = [0u32; B];
+    for (s, o) in src.chunks(B).zip(dst.chunks_mut(B / 3 * 4)) {
+        for (i, &v) in idx.iter_mut().zip(s) {
+            *i = (v.clamp(0.0, 1.0) * n) as u32;
+        }
+        for (px, ix) in o.chunks_exact_mut(4).zip(idx[..s.len()].chunks_exact(3)) {
+            px[0] = lut[(ix[0] as usize).min(last)];
+            px[1] = lut[(ix[1] as usize).min(last)];
+            px[2] = lut[(ix[2] as usize).min(last)];
+            px[3] = 255;
+        }
+    }
+}
+
 /// The 16-bit sRGB encoder ([`srgb16_paired`]). Runs are encoded in blocks: the table indices
 /// and fractions first (a loop that vectorises), then the table reads, then the interpolation
 /// (vectorises again); one fused loop does not vectorise, and with AVX2 gathers it is slower
@@ -1684,6 +1831,31 @@ where
                     k.row(&mut cache, src_row(i), &mut rgb);
                     put(i, &rgb);
                 }
+            }
+            None => {
+                // Finished pixels go straight to the destination, chunk by chunk.
+                let first = if rev_y { src_row(count - 1) } else { src_row(0) };
+                k.strip_to(&mut cache, first, count, w, &mut |n, x0, px| {
+                    // Destination index of developed row `first + n` within this tile.
+                    let i = if rev_y { h - 1 - t * strip - (first + n) } else { n };
+                    if !swap {
+                        let row = tile.row(i);
+                        if rev_x {
+                            for (j, p) in px.iter().enumerate() {
+                                let d = w - 1 - (x0 + j);
+                                row[d * N..d * N + N].copy_from_slice(&enc.px(*p));
+                            }
+                        } else {
+                            enc.run(px, &mut row[x0 * N..(x0 + px.len()) * N]);
+                        }
+                    } else {
+                        for (j, p) in px.iter().enumerate() {
+                            let x = x0 + j;
+                            let oy = if rev_x { w - 1 - x } else { x };
+                            tile.row(oy)[i * N..i * N + N].copy_from_slice(&enc.px(*p));
+                        }
+                    }
+                });
             }
             _ => {
                 let first = if rev_y { src_row(count - 1) } else { src_row(0) };
@@ -2143,6 +2315,41 @@ mod tests {
                     let a = to_rgba8(&d, info.orientation, false);
                     let b = develop_rgba8(&img, &info, (3, 1), &p, true).unwrap();
                     assert_eq!(a, b, "orientation {o} {demosaic:?}");
+                }
+            }
+        }
+    }
+
+    /// The demosaics that hand their bands over in column chunks are streamed to the encoder
+    /// (`Kernel::strip_to`): the result equals developing whole strips, then encoding, for
+    /// every orientation, across chunk and band borders.
+    #[test]
+    fn streamed_chunks_match_two_pass_for_all_orientations() {
+        let (w, h) = (430u32, 150u32);
+        let mut img = RawImage::new_u16(w, h, 1, &Limits::default()).unwrap();
+        let mut s = 12345u32;
+        for v in img.u16_mut().iter_mut() {
+            s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+            *v = (100 + (s >> 20) % 3900) as u16;
+        }
+        let xtrans = CfaPattern::parse("GGRGGB/GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG").unwrap();
+        for (cfa, demosaics) in [
+            (CfaPattern::RGGB, &[Demosaic::Ahd, Demosaic::EdgeAware, Demosaic::Ppg][..]),
+            (xtrans, &[Demosaic::EdgeAware][..]),
+        ] {
+            let mut info = FrameInfo::new(w, h, 12);
+            info.cfa = Some(cfa);
+            info.black_level = BlackLevel::uniform(64.0);
+            info.white_level = WhiteLevel::uniform(4095);
+            info.white_balance = WhiteBalance::from_multipliers(2.0, 1.0, 1.5, 1.0);
+            for &demosaic in demosaics {
+                for o in 1..=8 {
+                    info.orientation = Orientation::from_exif(o);
+                    let p = DevelopParams::new(&info, demosaic, Rect::new(3, 2, 421, 141));
+                    let d = develop(&img, &info, (1, 0), &p, true).unwrap();
+                    let a = to_rgba8(&d, info.orientation, false);
+                    let b = develop_rgba8(&img, &info, (1, 0), &p, true).unwrap();
+                    assert!(a == b, "orientation {o} {demosaic:?}");
                 }
             }
         }

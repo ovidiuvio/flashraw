@@ -69,6 +69,7 @@ impl Plan {
     /// (`(y1 - y0) * (xb - xa)` camera RGB pixels, white balanced by `wb`, indexed by channel).
     /// Needs `HALO <= y0`, `y1 + HALO <= height`, `HALO <= xa`, `xb + HALO <= w`.
     /// `fetch(y, row)` fills `row` (`w` samples) with the normalised mosaic row `y`.
+    #[cfg(test)]
     pub(crate) fn develop(
         &self,
         w: usize,
@@ -77,6 +78,26 @@ impl Plan {
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
         out: &mut [[f32; 3]],
+    ) {
+        let nc = cols.1 - cols.0;
+        self.develop_chunks(w, rows, cols, wb, fetch, &mut |c0, cw, px| {
+            for (i, r) in px.chunks_exact(cw).enumerate() {
+                out[i * nc + c0..i * nc + c0 + cw].copy_from_slice(r);
+            }
+        })
+    }
+
+    /// [`Plan::develop`] handing the result over in column chunks: `emit(c0, cw, pixels)` gets
+    /// columns `xa + c0..xa + c0 + cw` of every row (`(y1 - y0) * cw` pixels, row by row), so
+    /// the caller can finish them while they are in cache.
+    pub(crate) fn develop_chunks(
+        &self,
+        w: usize,
+        rows: (usize, usize),
+        cols: (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut crate::process::PixelSink<'_>,
     ) {
         // The same source compiled for AVX2 (no FMA, so every lane performs the same operations
         // in the same order: bit-identical to the baseline build) vectorises the plane loops.
@@ -97,7 +118,7 @@ impl Plan {
         cols: (usize, usize),
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
-        out: &mut [[f32; 3]],
+        out: &mut crate::process::PixelSink<'_>,
     ) {
         self.develop_impl(w, rows, cols, wb, fetch, out)
     }
@@ -110,10 +131,10 @@ impl Plan {
         (xa, xb): (usize, usize),
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
-        out: &mut [[f32; 3]],
+        out: &mut crate::process::PixelSink<'_>,
     ) {
         let (nr, nc) = (y1 - y0, xb - xa);
-        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w && out.len() == nr * nc);
+        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w);
         let er = nr + 2 * HALO;
         let bw = nc + 2 * HALO;
         // The balanced mosaic of the band, clipped at the white level like the output.
@@ -129,11 +150,38 @@ impl Plan {
             }
         }
         let mut work = Work::new(er, CHUNK + 2 * HALO);
+        let mut buf = vec![[0f32; 3]; nr * CHUNK.min(nc)];
         let mut c0 = 0;
         while c0 < nc {
             let c1 = (c0 + CHUNK).min(nc);
-            self.chunk(&m, bw, (y0, xa, c0, c1), er, &mut work, out, nc);
+            let cw = c1 - c0;
+            self.chunk(&m, bw, (y0, xa, c0, c1), er, &mut work, &mut buf[..nr * cw]);
+            out(c0, cw, &buf[..nr * cw]);
             c0 = c1;
+        }
+    }
+
+    /// The pair steps of row `i` of both candidates (columns 4 to `ec - 5` start a pair).
+    #[inline(always)]
+    fn pair_steps(lab: &[[Vec<f32>; 3]; 2], ec: usize, i: usize, out: &mut [PairSteps; 2]) {
+        let (x0, n) = (4, ec - 8);
+        let base = i * ec + x0;
+        for (d, o) in out.iter_mut().enumerate() {
+            let [pl, pa, pb] = &lab[d];
+            let (l, a, b) = (&pl[base..base + n], &pa[base..base + n], &pb[base..base + n]);
+            let step = |off: usize, ol: &mut [f32], oc: &mut [f32]| {
+                let (ql, qa, qb) =
+                    (&pl[base + off..base + off + n], &pa[base + off..base + off + n], &pb[base + off..base + off + n]);
+                let (ol, oc) = (&mut ol[x0..x0 + n], &mut oc[x0..x0 + n]);
+                for x in 0..n {
+                    ol[x] = (ql[x] - l[x]).abs();
+                    oc[x] = (qa[x] - a[x]) * (qa[x] - a[x]) + (qb[x] - b[x]) * (qb[x] - b[x]);
+                }
+            };
+            step(1, &mut o.l, &mut o.c);
+            step(ec, &mut o.dl, &mut o.dc);
+            step(ec + 1, &mut o.xl, &mut o.xc);
+            step(ec - 1, &mut o.yl, &mut o.yc);
         }
     }
 
@@ -148,7 +196,6 @@ impl Plan {
         er: usize,
         wk: &mut Work,
         out: &mut [[f32; 3]],
-        nc: usize,
     ) {
         let ec = c1 - c0 + 2 * HALO;
         // Local copy of the chunk's mosaic: local column j is band column c0 + j.
@@ -250,62 +297,57 @@ impl Plan {
             }
         }
 
-        // 3. Thresholds: the smaller of the largest steps along the row in H and along the
-        //    column in V (chroma as a squared distance).
-        for i in 4..er - 4 {
-            let n = ec - 8;
-            let base = i * ec + 4;
-            // Steps of candidate d to the neighbours at offset `o` (1 for H, ec for V).
-            let tmp = &mut wk.tmp;
-            for d in 0..2 {
-                let o = if d == 0 { 1 } else { ec };
-                let [pl, pa, pb] = &wk.lab[d];
-                let (l, a, b) = (&pl[base..base + n], &pa[base..base + n], &pb[base..base + n]);
-                let (l1, l2) = (&pl[base - o..base - o + n], &pl[base + o..base + o + n]);
-                let (a1, a2) = (&pa[base - o..base - o + n], &pa[base + o..base + o + n]);
-                let (b1, b2) = (&pb[base - o..base - o + n], &pb[base + o..base + o + n]);
-                let (head, tail) = tmp.split_at_mut(d * 2 + 1);
-                let (tl, tc) = (&mut head[d * 2][..n], &mut tail[0][..n]);
+        // 3. and 4. Thresholds and homogeneity. The lightness step and the chroma distance of two
+        //    neighbouring pixels are computed once per pair, row by row (pairs to the right, down,
+        //    down-right and down-left), and read from both ends: the same values as computing
+        //    them per pixel, as `|a - b| = |b - a|` and `(a - b)^2 = (b - a)^2` exactly.
+        //    Thresholds of a pixel: the smaller of the largest steps along the row in H and along
+        //    the column in V (chroma as a squared distance). Homogeneity of a candidate: the
+        //    number of the 8 neighbours within both thresholds.
+        let rd = &mut wk.rd;
+        Self::pair_steps(&wk.lab, ec, 4, &mut rd[0]);
+        for i in 5..er - 5 {
+            let (prev, cur) = rd.split_at_mut(1);
+            let (prev, cur) = (&prev[0], &mut cur[0]);
+            Self::pair_steps(&wk.lab, ec, i, cur);
+            let (x0, n) = (5, ec - 10);
+            let [e0, e1] = &mut wk.eps;
+            let (el, ecr) = (&mut e0[..n], &mut e1[..n]);
+            {
+                let (h, v0, v1) = (&cur[0], &prev[1], &cur[1]);
+                let (hl0, hl1, hc0, hc1) =
+                    (&h.l[x0 - 1..x0 - 1 + n], &h.l[x0..x0 + n], &h.c[x0 - 1..x0 - 1 + n], &h.c[x0..x0 + n]);
+                let (vl0, vl1, vc0, vc1) =
+                    (&v0.dl[x0..x0 + n], &v1.dl[x0..x0 + n], &v0.dc[x0..x0 + n], &v1.dc[x0..x0 + n]);
                 for x in 0..n {
-                    tl[x] = (l1[x] - l[x]).abs().max((l2[x] - l[x]).abs());
-                    let c1 = (a1[x] - a[x]) * (a1[x] - a[x]) + (b1[x] - b[x]) * (b1[x] - b[x]);
-                    let c2 = (a2[x] - a[x]) * (a2[x] - a[x]) + (b2[x] - b[x]) * (b2[x] - b[x]);
-                    tc[x] = c1.max(c2);
+                    el[x] = hl0[x].max(hl1[x]).min(vl0[x].max(vl1[x]));
+                    ecr[x] = hc0[x].max(hc1[x]).min(vc0[x].max(vc1[x]));
                 }
             }
-            let [e0, e1] = &mut wk.eps;
-            let (e0, e1) = (&mut e0[base..base + n], &mut e1[base..base + n]);
-            for x in 0..n {
-                e0[x] = tmp[0][x].min(tmp[2][x]);
-                e1[x] = tmp[1][x].min(tmp[3][x]);
-            }
-        }
-
-        // 4. Homogeneity: neighbours within the thresholds, counted per row of the 3x3 window.
-        for d in 0..2 {
-            let [pl, pa, pb] = &wk.lab[d];
-            for i in 5..er - 5 {
-                let n = ec - 10;
-                let base = i * ec + 5;
-                let (el, ecr) = (&wk.eps[0][base..base + n], &wk.eps[1][base..base + n]);
-                let (cl, ca, cb) = (&pl[base..base + n], &pa[base..base + n], &pb[base..base + n]);
-                let cnt = &mut wk.hom[d][base..base + n];
+            for d in 0..2 {
+                let (p, q) = (&prev[d], &cur[d]);
+                let cnt = &mut wk.hom[d][i * ec + x0..i * ec + x0 + n];
                 cnt.fill(0.0);
-                for (r, dxs) in [(-1isize, [-1isize, 0, 1]), (0, [-1, 1, 0]), (1, [-1, 0, 1])] {
-                    let rb = (base as isize + r * ec as isize) as usize;
-                    for (t, dx) in dxs.iter().enumerate() {
-                        if r == 0 && t == 2 {
-                            continue; // the pixel itself
-                        }
-                        let o = (rb as isize + dx) as usize;
-                        let (ql, qa, qb) = (&pl[o..o + n], &pa[o..o + n], &pb[o..o + n]);
-                        for x in 0..n {
-                            let dc = (qa[x] - ca[x]) * (qa[x] - ca[x]) + (qb[x] - cb[x]) * (qb[x] - cb[x]);
-                            cnt[x] += f32::from(u8::from((ql[x] - cl[x]).abs() <= el[x]) & u8::from(dc <= ecr[x]));
-                        }
+                // The eight neighbours: (lightness, chroma) steps of the pair, from the row above
+                // (up-left, up, up-right) and this row (left, right, down-left, down, down-right).
+                let pairs: [(&[f32], &[f32]); 8] = [
+                    (&p.xl[x0 - 1..x0 - 1 + n], &p.xc[x0 - 1..x0 - 1 + n]),
+                    (&p.dl[x0..x0 + n], &p.dc[x0..x0 + n]),
+                    (&p.yl[x0 + 1..x0 + 1 + n], &p.yc[x0 + 1..x0 + 1 + n]),
+                    (&q.l[x0 - 1..x0 - 1 + n], &q.c[x0 - 1..x0 - 1 + n]),
+                    (&q.l[x0..x0 + n], &q.c[x0..x0 + n]),
+                    (&q.yl[x0..x0 + n], &q.yc[x0..x0 + n]),
+                    (&q.dl[x0..x0 + n], &q.dc[x0..x0 + n]),
+                    (&q.xl[x0..x0 + n], &q.xc[x0..x0 + n]),
+                ];
+                for (sl, sc) in pairs {
+                    let (sl, sc) = (&sl[..n], &sc[..n]);
+                    for x in 0..n {
+                        cnt[x] += f32::from(u8::from(sl[x] <= el[x]) & u8::from(sc[x] <= ecr[x]));
                     }
                 }
             }
+            rd.swap(0, 1);
         }
 
         // 5. The candidates blended by their summed homogeneity.
@@ -338,7 +380,7 @@ impl Plan {
             let [r1, g1, b1] = &wk.rgb[1];
             let (r0, g0, b0) = (&r0[base..base + n], &g0[base..base + n], &b0[base..base + n]);
             let (r1, g1, b1) = (&r1[base..base + n], &g1[base..base + n], &b1[base..base + n]);
-            let o = (i - HALO) * nc + c0;
+            let o = (i - HALO) * n;
             for (x, px_out) in out[o..o + n].iter_mut().enumerate() {
                 // Weighted by the homogeneity of each candidate rather than picking the larger: on
                 // ground-truth tiles this is closer to the original at every noise level, and real
@@ -351,6 +393,28 @@ impl Plan {
     }
 }
 
+/// Steps between neighbouring pixels of one row of one candidate: to the right (`l`, `c`), down
+/// (`dl`, `dc`), down-right (`xl`, `xc`) and down-left (`yl`, `yc`), indexed by the column of the
+/// pixel the pair starts from. `l`: absolute lightness step; `c`: squared chroma distance.
+#[derive(Clone)]
+struct PairSteps {
+    l: Vec<f32>,
+    c: Vec<f32>,
+    dl: Vec<f32>,
+    dc: Vec<f32>,
+    xl: Vec<f32>,
+    xc: Vec<f32>,
+    yl: Vec<f32>,
+    yc: Vec<f32>,
+}
+
+impl PairSteps {
+    fn new(ec: usize) -> PairSteps {
+        let v = || vec![0f32; ec];
+        PairSteps { l: v(), c: v(), dl: v(), dc: v(), xl: v(), xc: v(), yl: v(), yc: v() }
+    }
+}
+
 /// Working planes of one chunk (`er` rows of up to `CHUNK + 2 * HALO` columns).
 struct Work {
     m: Vec<f32>,
@@ -358,12 +422,13 @@ struct Work {
     rgb: [[Vec<f32>; 3]; 2],
     lab: [[Vec<f32>; 3]; 2],
     diff: Vec<f32>,
-    tmp: [Vec<f32>; 4],
     vsum: [Vec<f32>; 2],
     hsum: [Vec<f32>; 2],
     mask: [[Vec<f32>; 4]; 2],
     eps: [Vec<f32>; 2],
     hom: [Vec<f32>; 2],
+    /// Pair steps of the previous and current row, per candidate.
+    rd: [[PairSteps; 2]; 2],
 }
 
 impl Work {
@@ -374,13 +439,13 @@ impl Work {
             g: [vec![0.0; n], vec![0.0; n]],
             rgb: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; n])),
             diff: vec![0.0; n],
-            tmp: std::array::from_fn(|_| vec![0.0; ec]),
             vsum: [vec![0.0; ec], vec![0.0; ec]],
             hsum: [vec![0.0; n], vec![0.0; n]],
             mask: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; ec])),
             lab: std::array::from_fn(|_| std::array::from_fn(|_| vec![0.0; n])),
-            eps: [vec![0.0; n], vec![0.0; n]],
+            eps: [vec![0.0; ec], vec![0.0; ec]],
             hom: [vec![0.0; n], vec![0.0; n]],
+            rd: std::array::from_fn(|_| std::array::from_fn(|_| PairSteps::new(ec))),
         }
     }
 }

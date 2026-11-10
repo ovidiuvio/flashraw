@@ -231,6 +231,7 @@ impl Plan {
     /// (`(y1 - y0) * (xb - xa)` camera RGB pixels, white balanced by `wb`, indexed by
     /// channel). Needs `HALO <= y0`, `y1 + HALO <= height`, `HALO <= xa`, `xb + HALO <= w`.
     /// `fetch(y, row)` fills `row` (`w` samples) with the normalised mosaic row `y`.
+    #[cfg(test)]
     pub(crate) fn develop(
         &self,
         w: usize,
@@ -239,6 +240,25 @@ impl Plan {
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
         out: &mut [[f32; 3]],
+    ) {
+        let nc = cols.1 - cols.0;
+        self.develop_chunks(w, rows, cols, wb, fetch, &mut |c0, cw, px| {
+            for (i, r) in px.chunks_exact(cw).enumerate() {
+                out[i * nc + c0..i * nc + c0 + cw].copy_from_slice(r);
+            }
+        })
+    }
+
+    /// [`Plan::develop`] handing the result over in column chunks: `emit(c0, cw, pixels)` gets
+    /// columns `xa + c0..xa + c0 + cw` of every row (`(y1 - y0) * cw` pixels, row by row).
+    pub(crate) fn develop_chunks(
+        &self,
+        w: usize,
+        rows: (usize, usize),
+        cols: (usize, usize),
+        wb: &[f32; 4],
+        fetch: &mut dyn FnMut(usize, &mut [f32]),
+        out: &mut crate::process::PixelSink<'_>,
     ) {
         // The same source compiled for AVX2 (without FMA: every lane performs the same
         // multiplies and adds in the same order, so results are bit-identical to the baseline
@@ -260,7 +280,7 @@ impl Plan {
         cols: (usize, usize),
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
-        out: &mut [[f32; 3]],
+        out: &mut crate::process::PixelSink<'_>,
     ) {
         self.develop_impl(w, rows, cols, wb, fetch, out)
     }
@@ -273,10 +293,39 @@ impl Plan {
         (xa, xb): (usize, usize),
         wb: &[f32; 4],
         fetch: &mut dyn FnMut(usize, &mut [f32]),
-        out: &mut [[f32; 3]],
+        out: &mut crate::process::PixelSink<'_>,
     ) {
-        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w && out.len() == (y1 - y0) * (xb - xa));
-        self.develop_chroma(w, (y0, y1), (xa, xb), wb, fetch, out)
+        debug_assert!(y0 >= HALO && xa >= HALO && xb + HALO <= w);
+        // Columns are developed in chunks of `CHUNK`, so the working planes of a chunk stay in
+        // cache (a band across a whole frame is tens of megabytes). The rows of the band are
+        // normalised once; a chunk sees a frame that starts at column `x0` (a multiple of the
+        // CFA period, so the pattern phase does not change) and is as wide as it needs. A
+        // pixel depends only on its neighbourhood, so the result is that of the whole band.
+        const CHUNK: usize = 240;
+        let p = self.t.period;
+        let side = 2 + usize::from(self.beta > 0.0) + CORE_HALO;
+        let (ry0, ry1) = (y0 - side, y1 + side);
+        let mut band = vec![0f32; (ry1 - ry0) * w];
+        for (i, row) in band.chunks_exact_mut(w).enumerate() {
+            fetch(ry0 + i, row);
+        }
+        let nr = y1 - y0;
+        let mut tmp = Vec::new();
+        let mut ca = xa;
+        while ca < xb {
+            let cb = (ca + CHUNK).min(xb);
+            let x0 = (ca - side) / p * p;
+            let wl = (cb + side).min(w) - x0;
+            tmp.clear();
+            tmp.resize(nr * (cb - ca), [0f32; 3]);
+            let mut local = |y: usize, row: &mut [f32]| {
+                let o = (y - ry0) * w + x0;
+                row.copy_from_slice(&band[o..o + wl]);
+            };
+            self.develop_chroma(wl, (y0, y1), (ca - x0, cb - x0), wb, &mut local, &mut tmp);
+            out(ca - xa, cb - ca, &tmp);
+            ca = cb;
+        }
     }
 
     /// The plan in the form the GPU kernels take (`flashraw_gpu::EdgeSpec`): the tables, where
@@ -611,24 +660,32 @@ impl Plan {
             let rm = &g[a * gc..a * gc + gc];
             let r0 = &g[(a + 1) * gc..(a + 2) * gc];
             let rp = &g[(a + 2) * gc..(a + 3) * gc];
+            // Pre-cut slices of length `dc`, so the loop has no bounds checks and vectorises.
+            let (h0, h2) = (&r0[..dc], &r0[2..2 + dc]);
+            let (vm, vp) = (&rm[1..1 + dc], &rp[1..1 + dc]);
+            let (m0, m2, p0, p2) = (&rm[..dc], &rm[2..2 + dc], &rp[..dc], &rp[2..2 + dc]);
+            let [q0, q1, q2, q3] = &mut dsq;
+            let r = a * dc..(a + 1) * dc;
+            let (q0, q1, q2, q3) = (&mut q0[r.clone()], &mut q1[r.clone()], &mut q2[r.clone()], &mut q3[r]);
             for b in 0..dc {
-                let dh = r0[b + 2] - r0[b];
-                let dv = rp[b + 1] - rm[b + 1];
-                let d1 = (rp[b + 2] - rm[b]) * FRAC_1_SQRT_2;
-                let d2 = (rp[b] - rm[b + 2]) * FRAC_1_SQRT_2;
-                dsq[0][a * dc + b] = dh * dh;
-                dsq[1][a * dc + b] = dv * dv;
-                dsq[2][a * dc + b] = d1 * d1;
-                dsq[3][a * dc + b] = d2 * d2;
+                let dh = h2[b] - h0[b];
+                let dv = vp[b] - vm[b];
+                let d1 = (p2[b] - m0[b]) * FRAC_1_SQRT_2;
+                let d2 = (p0[b] - m2[b]) * FRAC_1_SQRT_2;
+                q0[b] = dh * dh;
+                q1[b] = dv * dv;
+                q2[b] = d1 * d1;
+                q3[b] = d2 * d2;
             }
         }
         let mut hsum: [Vec<f32>; NDIR] = std::array::from_fn(|_| vec![0f32; dr * nc]);
         for d in 0..NDIR {
             for a in 0..dr {
                 let s = &dsq[d][a * dc..(a + 1) * dc];
+                let (s0, s1, s2) = (&s[..nc], &s[1..1 + nc], &s[2..2 + nc]);
                 let o = &mut hsum[d][a * nc..(a + 1) * nc];
                 for j in 0..nc {
-                    o[j] = s[j] + s[j + 1] + s[j + 2];
+                    o[j] = s0[j] + s1[j] + s2[j];
                 }
             }
         }
@@ -639,9 +696,10 @@ impl Plan {
                 let h = &hsum[d];
                 let (a, b, c) =
                     (&h[i * nc..(i + 1) * nc], &h[(i + 1) * nc..(i + 2) * nc], &h[(i + 2) * nc..(i + 3) * nc]);
-                for (j, o) in wts[d][i * nc..(i + 1) * nc].iter_mut().enumerate() {
+                let o = &mut wts[d][i * nc..(i + 1) * nc];
+                for j in 0..nc {
                     let u = a[j] + b[j] + c[j] + EPS;
-                    *o = 1.0 / (u * u);
+                    o[j] = 1.0 / (u * u);
                 }
             }
             let [w0, w1, w2, w3] = &mut wts;
@@ -734,17 +792,44 @@ fn smooth(v: &[[f32; 3]], ec: usize, beta: f32, nr: usize, nc: usize, out: &mut 
 /// Medians of the 3x3 neighbourhoods of row `i + 1` of `a` (`ec` wide), for the columns
 /// `1..out.len() + 1`, into `out`.
 fn median_row(a: &[f32], ec: usize, i: usize, out: &mut [f32]) {
+    // Each column of three is sorted once and shared by the three windows that contain it;
+    // the median of the window is then the median of (largest of the column minima, median
+    // of the column medians, smallest of the column maxima), the same value as sorting all
+    // nine (a median is one of the inputs, so no rounding is involved).
     let n = out.len();
-    let r0 = &a[i * ec..(i + 1) * ec];
-    let r1 = &a[(i + 1) * ec..(i + 2) * ec];
-    let r2 = &a[(i + 2) * ec..(i + 3) * ec];
+    let (r0, r1, r2) =
+        (&a[i * ec..i * ec + n + 2], &a[(i + 1) * ec..(i + 1) * ec + n + 2], &a[(i + 2) * ec..(i + 2) * ec + n + 2]);
+    let m = n + 2;
+    let (mut lo, mut mi, mut hi) = (vec![0f32; m], vec![0f32; m], vec![0f32; m]);
+    for j in 0..m {
+        let (a, b, c) = (r0[j], r1[j], r2[j]);
+        let (x, y) = (a.min(b), a.max(b));
+        let (y, z) = (y.min(c), y.max(c));
+        let (x, y) = (x.min(y), x.max(y));
+        lo[j] = x;
+        mi[j] = y;
+        hi[j] = z;
+    }
+    let (l0, l1, l2) = (&lo[..n], &lo[1..n + 1], &lo[2..n + 2]);
+    let (m0, m1, m2) = (&mi[..n], &mi[1..n + 1], &mi[2..n + 2]);
+    let (h0, h1, h2) = (&hi[..n], &hi[1..n + 1], &hi[2..n + 2]);
     for j in 0..n {
-        out[j] = median9([r0[j], r0[j + 1], r0[j + 2], r1[j], r1[j + 1], r1[j + 2], r2[j], r2[j + 1], r2[j + 2]]);
+        let a = l0[j].max(l1[j]).max(l2[j]);
+        let c = h0[j].min(h1[j]).min(h2[j]);
+        let b = med3(m0[j], m1[j], m2[j]);
+        out[j] = med3(a, b, c);
     }
 }
 
-/// Median of nine values (a fixed comparison network, branch free).
+/// Median of three values.
 #[inline(always)]
+fn med3(a: f32, b: f32, c: f32) -> f32 {
+    a.min(b).max(a.max(b).min(c))
+}
+
+/// Median of nine values (a fixed comparison network, branch free): the reference for
+/// [`median_row`] in the tests.
+#[cfg(test)]
 fn median9(mut p: [f32; 9]) -> f32 {
     #[inline(always)]
     fn sort(p: &mut [f32; 9], a: usize, b: usize) {
@@ -892,9 +977,17 @@ mod tests {
                 let mut a = vec![[0f32; 3]; (y.1 - y.0) * (x.1 - x.0)];
                 let mut b = a.clone();
                 let mut fetch = |yy: usize, row: &mut [f32]| row.copy_from_slice(&m[yy * w..(yy + 1) * w]);
-                plan.develop_impl(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut a);
+                let nc = x.1 - x.0;
+                fn into(out: &mut [[f32; 3]], nc: usize) -> impl FnMut(usize, usize, &[[f32; 3]]) + '_ {
+                    move |c0, cw, px| {
+                        for (i, r) in px.chunks_exact(cw).enumerate() {
+                            out[i * nc + c0..i * nc + c0 + cw].copy_from_slice(r);
+                        }
+                    }
+                }
+                plan.develop_impl(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut into(&mut a, nc));
                 // SAFETY: AVX2 was detected above.
-                unsafe { plan.develop_avx2(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut b) };
+                unsafe { plan.develop_avx2(w, y, x, &[1.1, 1.0, 0.9, 1.0], &mut fetch, &mut into(&mut b, nc)) };
                 assert!(
                     a.iter().zip(&b).all(|(p, q)| p.iter().zip(q).all(|(u, v)| u.to_bits() == v.to_bits())),
                     "{name} {beta}"
@@ -1047,6 +1140,26 @@ mod tests {
             let mut sorted = v;
             sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
             assert_eq!(median9(v), sorted[4], "{v:?}");
+        }
+    }
+
+    #[test]
+    fn median_row_is_the_median_of_each_window() {
+        let (ec, rows) = (37, 4);
+        let mut s = 7u32;
+        let a: Vec<f32> = (0..ec * rows)
+            .map(|_| {
+                s = s.wrapping_mul(1664525).wrapping_add(1013904223);
+                ((s >> 16) % 11) as f32 * 0.25 - 1.0
+            })
+            .collect();
+        for i in 0..rows - 2 {
+            let mut out = vec![0f32; ec - 2];
+            median_row(&a, ec, i, &mut out);
+            for (j, &o) in out.iter().enumerate() {
+                let w: [f32; 9] = std::array::from_fn(|k| a[(i + k / 3) * ec + j + k % 3]);
+                assert_eq!(o, median9(w), "row {i} column {j}");
+            }
         }
     }
 
