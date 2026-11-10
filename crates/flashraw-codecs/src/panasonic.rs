@@ -253,12 +253,41 @@ pub fn packed_pixels(bits: u32) -> Option<usize> {
     }
 }
 
+/// One 16-byte packet of `P` pixels of `B` bits, least significant bits first, into `out` (up
+/// to `P` pixels). The shifts are known at compile time: two 64-bit halves instead of a 128-bit
+/// value shifted by a variable amount.
+#[inline(always)]
+fn unpack_packet<const B: usize, const P: usize>(p: &[u8; 16], out: &mut [u16]) {
+    let mask = (1u64 << B) - 1;
+    let lo = u64::from_le_bytes(p[..8].try_into().unwrap());
+    let hi = u64::from_le_bytes(p[8..].try_into().unwrap());
+    for (k, o) in out.iter_mut().enumerate().take(P) {
+        let s = B * k;
+        let v = if s + B <= 64 {
+            lo >> s
+        } else if s >= 64 {
+            hi >> (s - 64)
+        } else {
+            (lo >> s) | (hi << (64 - s))
+        };
+        *o = (v & mask) as u16;
+    }
+}
+
+/// A row of 16-byte packets of `P` pixels of `B` bits.
+#[inline]
+fn unpack_lsb_row<const B: usize, const P: usize>(src: &[u8], row: &mut [u16]) {
+    for (p, px) in src.chunks_exact(16).zip(row.chunks_exact_mut(P)) {
+        unpack_packet::<B, P>(p.try_into().unwrap(), px);
+    }
+}
+
+/// One packet of 12-bit (10 pixels) or 14-bit (9 pixels) samples.
 #[inline]
 fn unpack_lsb(packet: &[u8; 16], bits: u32, out: &mut [u16]) {
-    let v = u128::from_le_bytes(*packet);
-    let mask = (1u128 << bits) - 1;
-    for (k, o) in out.iter_mut().enumerate() {
-        *o = ((v >> (bits as usize * k)) & mask) as u16;
+    match bits {
+        14 => unpack_packet::<14, 9>(packet, out),
+        _ => unpack_packet::<12, 10>(packet, out),
     }
 }
 
@@ -343,8 +372,9 @@ pub fn decode_v7_rows(
                 continue;
             }
             let src = &data[y * row_bytes..(y + 1) * row_bytes];
-            for (p, px) in src.chunks_exact(16).zip(row.chunks_exact_mut(ppp)) {
-                unpack_lsb(p.try_into().unwrap_or(&[0; 16]), bits, px);
+            match bits {
+                14 => unpack_lsb_row::<14, 9>(src, row),
+                _ => unpack_lsb_row::<12, 10>(src, row),
             }
         }
     });
