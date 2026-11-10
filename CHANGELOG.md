@@ -14,6 +14,10 @@
   dots on real files (speckle index 1.62 to 1.44). Output changes.
 - Edge-aware on X-Trans uses filters trained with a 5x5 support (level with the 7x7 ones on held-out tiles, fewer
   multiplications). Output changes on X-Trans files.
+- Edge-aware on X-Trans follows the 3x3 median of the colour differences with the luminance-gated second pass of the
+  Bayer stage (CPU and GPU): on held-out tiles 42.00 / 39.37 dB clean (was 41.92 / 39.20) and better under noise, and
+  the real-file colour speckle index falls from 2.18 to 1.84, the lowest of the X-Trans demosaics measured
+  (`docs/benchmarks.md`). Output changes on X-Trans files.
 - Faster: `Ppg` and `Rcd` vectorise (interior output unchanged; the 4-pixel border ring is now developed by them
   instead of bilinear), and the black-level normalisation, the 16-bit encode loop, the AHD green loop and the bilinear
   path of X-Trans and other patterns do less work per pixel (output unchanged).

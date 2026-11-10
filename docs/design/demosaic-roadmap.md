@@ -48,6 +48,9 @@ and column tiling were tried and did not explain it.
 * `Demosaic::Ahd` blends its two candidates by their homogeneity instead of a hard choice: +0.25 dB clean and +0.7 to
   +0.8 dB under noise, and the lowest real-file speckle index of every demosaic measured ([ahd-demosaic](ahd-demosaic.md)).
 * Edge-aware X-Trans filters trained with a 5x5 support (below).
+* Edge-aware X-Trans: the 3x3 median of the colour differences is followed by the gated second pass of the Bayer stage.
+  Better on the held-out tiles at every noise level and on the real-file speckle index (2.18 to 1.84, below LibRaw VNG's
+  1.96), [edge-aware-demosaic](edge-aware-demosaic.md) step 4.
 * Speed, all with unchanged output unless noted: `Ppg` and `Rcd` in branch-free row loops with a 4-sample halo (25 % and
   14 % faster; the border ring changes) and 256-column chunks (cache-resident with many threads: 19 % and 24 % faster on
   16 threads of the x86-64 machine), the black-level normalisation vectorised (it was about a fifth of the
@@ -82,6 +85,9 @@ the CPU kernels skip). Trained on the tiles of the published benchmark with the 
 | X-Trans 7x7 | 41.89 / 39.14 | 37.64 / 36.03 | 34.44 / 33.38 |
 | X-Trans 5x5 (shipped) | 41.92 / 39.20 | 37.63 / 36.03 | 34.43 / 33.38 |
 
+(Both with the one-pass median X-Trans chroma stage of the time; the two-pass stage now shipped scores 42.00 / 39.37,
+37.69 / 36.13 and 34.51 / 33.47 with the 5x5 filters.)
+
 X-Trans now ships the 5x5 filters (retrained on all tiles; a 7x7 retrain on the same tiles reproduces the previous
 table byte for byte, so the pipeline is reproducible). Bayer keeps 7x7: the 5x5 fit loses 0.11 dB of edge PSNR on
 clean tiles. The time saved is small, 5 to 7 % of the X-Trans develop on one thread (a measurement on a busy machine), because the halo stays at 8 (Bayer
@@ -98,5 +104,9 @@ real-world files) the two supports were also level on Bayer.
   a Ryzen 7 9700X, one thread): the kernels are written for 16-lane accumulators and NEON has 4 lanes, with no wider
   second compile.
 * A per-pattern halo (7 for X-Trans with 5x5 filters) would save a little more on X-Trans.
-* New X-Trans algorithms beyond edge-aware: the homogeneity choice and the second pass did not help; better training
-  data is the next candidate.
+* New X-Trans algorithms beyond edge-aware: the homogeneity choice and the second pass of the direction weights did
+  not help; the two-pass chroma stage did (above). Better training data is the next candidate.
+* The ground-truth tiles and the real files disagree on Bayer chroma: the gated pass 2 alone on the filtered
+  differences is +0.17 dB clean and +0.74 dB at high noise on the tiles but raises the real-file speckle from 2.09 to
+  2.96. The 2x2-binned tiles are softer than real files at the Nyquist frequency, where false colour appears, which
+  is one more reason for the full-resolution training data above.

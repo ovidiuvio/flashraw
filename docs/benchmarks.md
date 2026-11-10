@@ -863,7 +863,7 @@ and the colour error). Noise is added to the mosaic before development (variance
 | X-Trans, photographic tiles | clean | moderate noise | high noise |
 |---|---:|---:|---:|
 | FlashRaw bilinear | 41.68 / 38.00 | 36.69 / 34.86 | 33.07 / 31.96 |
-| **FlashRaw edge-aware** | 41.92 / 39.20 | 37.63 / 36.03 | 34.43 / 33.38 |
+| **FlashRaw edge-aware** | 42.00 / 39.37 | 37.69 / 36.13 | 34.51 / 33.47 |
 | LibRaw Markesteijn 1-pass | 41.75 / 39.26 | 35.27 / 34.31 | 31.32 / 30.77 |
 | LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
@@ -874,7 +874,8 @@ edge-aware has the best edge PSNR (39.43, then FlashRaw RCD 39.38 and LibRaw DCB
 colour error of every method on clean tiles (`truth.json`) and is above LibRaw DCB, the best LibRaw demosaic here, at every noise level;
 FlashRaw PPG and AHD are above LibRaw PPG and AHD at every noise level (AHD by 0.2 dB clean and 0.7 to 0.8 dB under
 noise, because it blends its two candidates instead of picking one, [design note](design/ahd-demosaic.md)). On clean
-X-Trans mosaics FlashRaw edge-aware has the best PSNR and is 0.06 dB behind LibRaw Markesteijn 1-pass on edge PSNR.
+X-Trans mosaics FlashRaw edge-aware has the best PSNR and edge PSNR (42.00 / 39.37 against 41.75 / 39.26 for LibRaw
+Markesteijn 1-pass); Markesteijn keeps a slightly lower colour error on clean tiles (`truth.json`).
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
 index (mean Laplacian of R-G and B-G over the Laplacian of luma; lower = fewer false-colour dots and zipper patterns) and
@@ -885,7 +886,7 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
-| **FlashRaw edge-aware** | 2.09 | 2.18 |
+| **FlashRaw edge-aware** | 2.09 | 1.84 |
 | **FlashRaw AHD** (Bayer only) | 1.44 | |
 | **FlashRaw PPG** (Bayer only) | 2.07 | |
 | **FlashRaw RCD** (Bayer only) | 2.01 | |
@@ -902,8 +903,9 @@ FlashRaw AHD is the cleanest Bayer demosaic of all: on the 11 files that have Li
 for LibRaw AAHD, the next, and 1.57 for LibRaw AHD (edge-aware 1.97, PPG 2.00, RCD 1.94 on those files). Its fine-detail
 index is lower than LibRaw AHD's (0.0168 against 0.0189) because blending the two candidates also averages noise, which
 the index counts as detail; against ground truth it is the closer of the two at every noise level (above). FlashRaw
-edge-aware is far cleaner than any bilinear and matches LibRaw DCB on Bayer; on X-Trans it is 0.2 behind Markesteijn and
-VNG. `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
+edge-aware is far cleaner than any bilinear and matches LibRaw DCB on Bayer; on X-Trans it is the cleanest demosaic
+(1.84 against 1.96 for LibRaw VNG and 2.02 for Markesteijn 1-pass), with a lower fine-detail index than Markesteijn
+(0.0254 against 0.0283). `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
 fewest false-colour dots.
 
 **Speed.** The post-process stage (demosaic, white balance, colour matrix, 16-bit sRGB encoding) of an 18 MP Bayer file
