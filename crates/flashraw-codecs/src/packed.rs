@@ -73,8 +73,12 @@ pub fn unpack(
             unpack_row(s, &mut row[..width], bits, layout.order, simd);
         }
     };
-    // Unpacking is memory-bound at every bit depth (see par::memory_bound_workers).
-    par::for_each_row_chunk_bounded(dst, dst_stride, par::memory_bound_workers(), parallel, body);
+    // Unpacking is memory-bound at every bit depth (see par::memory_bound_workers). Plain
+    // 16-bit copies on macOS take one worker: there threads that write fresh pages at the same
+    // time slow each other down (Apple M1 Ultra, 90 MB Nikon D850 frame: 3.5 ms on one thread,
+    // 5.7 to 13.7 ms on 2 to 20).
+    let workers = if bits == 16 && cfg!(target_os = "macos") { 1 } else { par::memory_bound_workers() };
+    par::for_each_row_chunk_bounded(dst, dst_stride, workers, parallel, body);
     Ok(())
 }
 
@@ -140,6 +144,14 @@ pub fn unpack_row_scalar(src: &[u8], dst: &mut [u16], bits: u32, order: PackOrde
 
 fn unpack_u16le(src: &[u8], dst: &mut [u16]) {
     let n = dst.len().min(src.len() / 2);
+    #[cfg(target_endian = "little")]
+    {
+        // Little-endian samples on a little-endian machine: a plain copy (memcpy speed).
+        // SAFETY: `dst[..n]` viewed as its `2 * n` bytes; every byte pattern is a valid `u16`.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(dst.as_mut_ptr().cast::<u8>(), n * 2) };
+        bytes.copy_from_slice(&src[..n * 2]);
+    }
+    #[cfg(not(target_endian = "little"))]
     for (d, s) in dst[..n].iter_mut().zip(src.chunks_exact(2)) {
         *d = u16::from_le_bytes([s[0], s[1]]);
     }
