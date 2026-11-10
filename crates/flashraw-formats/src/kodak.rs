@@ -224,19 +224,30 @@ impl Plan<'_> {
         let unit = DataUnit::Payload;
         match self.kind {
             Kind::K65000 { offset } => {
-                let rows = ctx.profiler.time(Stage::ContainerParse, || kc::scan_65000_rows(data, offset, w, h))?;
-                let errs = crate::medium::ErrorSlot::default();
-                ctx.profiler.time(Stage::EntropyDecode, || {
-                    par::for_each_row_chunk(out, w, 16, ctx.parallel, |first, chunk| {
-                        for (i, row) in chunk.chunks_mut(w).enumerate() {
-                            if let Err(e) = kc::decode_65000_row(data, rows[first + i], row, curve) {
-                                errs.set(e);
-                                return;
-                            }
+                if !ctx.parallel {
+                    // One thread: each row's end is the next row's start, no header scan needed.
+                    ctx.profiler.time(Stage::EntropyDecode, || -> Result<()> {
+                        let mut pos = offset;
+                        for row in out.chunks_mut(w).take(h) {
+                            pos = kc::decode_65000_row(data, pos, row, curve)?;
                         }
-                    })
-                });
-                errs.into_result()?;
+                        Ok(())
+                    })?;
+                } else {
+                    let rows = ctx.profiler.time(Stage::ContainerParse, || kc::scan_65000_rows(data, offset, w, h))?;
+                    let errs = crate::medium::ErrorSlot::default();
+                    ctx.profiler.time(Stage::EntropyDecode, || {
+                        par::for_each_row_chunk(out, w, 16, ctx.parallel, |first, chunk| {
+                            for (i, row) in chunk.chunks_mut(w).enumerate() {
+                                if let Err(e) = kc::decode_65000_row(data, rows[first + i], row, curve) {
+                                    errs.set(e);
+                                    return;
+                                }
+                            }
+                        })
+                    });
+                    errs.into_result()?;
+                }
             }
             Kind::K65000Rgb { offset } => ctx
                 .profiler

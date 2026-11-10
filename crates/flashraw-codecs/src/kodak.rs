@@ -47,6 +47,12 @@ pub fn block_len_65000(data: &[u8], pos: usize, len: usize) -> Option<(usize, bo
 /// `(len + 3) & !3` rounded up to 8 entries). Returns `true` for a raw block (values
 /// are absolute samples rather than differences).
 pub fn decode_block_65000(data: &[u8], pos: usize, len: usize, out: &mut [i16]) -> Result<bool> {
+    decode_block_65000_at(data, pos, len, out).map(|(raw, _)| raw)
+}
+
+/// [`decode_block_65000`], also returning the position just past the block (the next
+/// block's start, as [`block_len_65000`] gives it).
+pub fn decode_block_65000_at(data: &[u8], pos: usize, len: usize, out: &mut [i16]) -> Result<(bool, usize)> {
     let bsize = (len + 3) & !3;
     let need = bsize.div_ceil(8) * 8;
     if out.len() < need {
@@ -69,7 +75,7 @@ pub fn decode_block_65000(data: &[u8], pos: usize, len: usize, out: &mut [i16]) 
                 out[i + 2 + j] = (raw[j] & 0xfff) as i16;
             }
         }
-        return Ok(true);
+        return Ok((true, p));
     }
     let mut p = pos + bsize / 2;
     let mut bitbuf: u64 = 0;
@@ -99,7 +105,7 @@ pub fn decode_block_65000(data: &[u8], pos: usize, len: usize, out: &mut [i16]) 
     if p > data.len() + 4 {
         return Err(Error::corrupt("Kodak 65000: truncated block data"));
     }
-    Ok(false)
+    Ok((false, p))
 }
 
 /// Locate the start of every row of a 65000 CFA payload of `width x height`
@@ -122,16 +128,19 @@ pub fn scan_65000_rows(data: &[u8], start: usize, width: usize, height: usize) -
 }
 
 /// Decode one CFA row of 65000 data starting at `data[pos..]`, mapping values through
-/// `curve` (out-of-range predictions leave the sample at zero).
-pub fn decode_65000_row(data: &[u8], mut pos: usize, out: &mut [u16], curve: &[u16]) -> Result<()> {
+/// `curve` (out-of-range predictions leave the sample at zero). Returns where the next row
+/// starts.
+pub fn decode_65000_row(data: &[u8], mut pos: usize, out: &mut [u16], curve: &[u16]) -> Result<usize> {
     let width = out.len();
     let mut buf = [0i16; 272];
     let mut col = 0;
     while col < width {
         let len = BLOCK_65000.min(width - col);
-        let raw = decode_block_65000(data, pos, len, &mut buf)?;
-        let (n, _) = block_len_65000(data, pos, len).ok_or_else(|| Error::corrupt("Kodak 65000: truncated data"))?;
-        pos += n;
+        if data.get(pos..pos + ((len + 3) & !3) / 2).is_none() {
+            return Err(Error::corrupt("Kodak 65000: truncated data"));
+        }
+        let (raw, end) = decode_block_65000_at(data, pos, len, &mut buf)?;
+        pos = end;
         let mut pred = [0i32; 2];
         for (i, o) in out[col..col + len].iter_mut().enumerate() {
             let idx = if raw {
@@ -146,7 +155,7 @@ pub fn decode_65000_row(data: &[u8], mut pos: usize, out: &mut [u16], curve: &[u
         }
         col += BLOCK_65000;
     }
-    Ok(())
+    Ok(pos)
 }
 
 /// DC120: unrotate one 848-byte row.
