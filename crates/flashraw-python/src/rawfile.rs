@@ -588,7 +588,7 @@ impl RawFile {
 
     /// Decode the sensor data. Returns `(array, info)`.
     #[pyo3(signature = (
-        output="raw-u16", backend="auto", threads=None, region=None, crop=None, demosaic="bilinear",
+        output="raw-u16", backend="auto", threads=None, region=None, crop=None, demosaic="auto",
         apply_opcodes=true, corruption_policy="recover", tile=None, exposure=0.0, black_point=0.0,
         white_point=1.0, preview_fallback=false, color_space="srgb", output_profile=None,
         intent="perceptual", black_point_compensation=false, highlights="clip", white_balance="as-shot",

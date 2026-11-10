@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+- The default demosaic of RGB outputs is now `Demosaic::Auto` (edge-aware on Bayer and X-Trans, bilinear on other
+  patterns) in Rust, the command line (`--demosaic auto`), Python, JavaScript and C/C++ (`FLASHRAW_DEMOSAIC_AUTO` from
+  `flashraw_decode_options_init`). RGB output changes and develops several times slower; pass `bilinear` for the old
+  output and speed. Raw outputs are unchanged. The benchmark scripts pin `--demosaic bilinear` for the RAW-to-RGB
+  comparison.
 - `Demosaic::Auto` (`auto`, `FLASHRAW_DEMOSAIC_AUTO`): the best validated algorithm for the sensor, chosen when the file is
-  decoded (edge-aware on Bayer and X-Trans, bilinear on other patterns). Not the default; the algorithm behind it may change
+  decoded (edge-aware on Bayer and X-Trans, bilinear on other patterns). The algorithm behind it may change
   between minor versions. `Demosaic::Ppg` (`ppg`, `FLASHRAW_DEMOSAIC_PPG`) and `Demosaic::Rcd` (`rcd`, `FLASHRAW_DEMOSAIC_RCD`,
   experimental): two more Bayer demosaics, CPU only; on a sensor that is not Bayer they fail with `Error::InvalidArgument` for
   RGB outputs. Ground-truth numbers and the experiments that were not kept: `docs/design/bayer-demosaics.md`,

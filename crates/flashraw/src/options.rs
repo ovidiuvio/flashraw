@@ -208,8 +208,8 @@ impl OutputFormat {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Demosaic {
-    /// Bilinear interpolation (Bayer), nearest-same-colour average (other CFAs).
-    #[default]
+    /// Bilinear interpolation (Bayer), nearest-same-colour average (other CFAs). The fastest
+    /// full-resolution demosaic.
     Bilinear,
     /// 2x2 superpixel binning: half resolution, fastest, no interpolation artefacts.
     HalfSize,
@@ -239,10 +239,10 @@ pub enum Demosaic {
     /// The best validated algorithm for the sensor, chosen when the file is decoded and the same
     /// for the same sensor type on every machine: [`Demosaic::EdgeAware`] on Bayer and X-Trans
     /// sensors (the smallest error against ground truth on clean and noisy tiles in the
-    /// benchmarks), bilinear on every other pattern. It is not the default (that stays
-    /// [`Demosaic::Bilinear`], the fastest), and the algorithm behind it may change between
-    /// minor versions as better ones are validated; pin an explicit algorithm to keep the
-    /// output stable.
+    /// benchmarks), bilinear on every other pattern. The default. The algorithm behind it may
+    /// change between minor versions as better ones are validated; pin an explicit algorithm
+    /// (for example [`Demosaic::Bilinear`], the fastest) to keep the output stable.
+    #[default]
     Auto,
 }
 
@@ -381,7 +381,7 @@ pub struct DecodeOptions {
     pub region: Option<Rect>,
     /// Crop RGB outputs to the default crop (raw outputs are never cropped implicitly).
     pub crop: bool,
-    /// Demosaic algorithm for RGB outputs. Default: [`Demosaic::Bilinear`].
+    /// Demosaic algorithm for RGB outputs. Default: [`Demosaic::Auto`].
     pub demosaic: Demosaic,
     /// Clipped highlights of RGB outputs. Default: [`Highlights::Clip`].
     pub highlights: Highlights,

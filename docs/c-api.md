@@ -125,8 +125,8 @@ All functions are prefixed `flashraw_`. Handles are opaque (`flashraw_file`, `fl
 **Decoding**: `decode_options_init(&o)` then set `backend` (`FLASHRAW_BACKEND_*`), `output`
 (`FLASHRAW_OUTPUT_RAW_U16`, `_RAW_F32`, `_NORMALIZED_F32`, `_LINEAR_RGB_F32`,
 `_LINEAR_RGB_F16` (half floats), `_LINEAR_RGB16`, `_RGBA8`, `_RGB16` (16-bit display sRGB)),
-`threads` (0 = all cores), `use_region` + `region`, `crop`, `demosaic` (`BILINEAR`,
-`HALF_SIZE`), `apply_opcodes`, `corruption_policy` (`RECOVER` default, `STRICT`), limits,
+`threads` (0 = all cores), `use_region` + `region`, `crop`, `demosaic` (`AUTO` default, `BILINEAR`,
+`HALF_SIZE`, `EDGE_AWARE`, `AHD`, `PPG`, `RCD`), `apply_opcodes`, `corruption_policy` (`RECOVER` default, `STRICT`), limits,
 for the RGB outputs `exposure` (EV), `black_point` and `white_point` (linear values mapped to 0
 and 1; defaults 0, 0, 1), and `preview_fallback` (non-zero: RGB outputs of undecodable sensor
 data, e.g. Nikon High Efficiency NEF, return the embedded full-size preview instead of

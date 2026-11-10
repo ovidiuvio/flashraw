@@ -501,7 +501,7 @@ class RawFile:
         threads: Optional[int] = None,
         region: Optional[RectLike] = None,
         crop: Union[bool, str] = True,
-        demosaic: str = "bilinear",
+        demosaic: str = "auto",
         apply_opcodes: bool = True,
         corruption_policy: str = "recover",
         exposure: float = 0.0,
@@ -537,10 +537,13 @@ class RawFile:
             region: decode only this rectangle (sensor-buffer coordinates).
             crop: RGB outputs: crop to the recommended crop (default ``True``). Raw outputs
                 are never cropped by ``True``; ``"active"`` crops them to the active area.
-            demosaic: ``"bilinear"`` (default), ``"half-size"`` (2x2 binning), ``"edge-aware"``
-                (Bayer and X-Trans: cleaner edges, several times slower; runs on the GPU backend too) or
-                ``"ahd"`` (Bayer, homogeneity-directed; CPU only) ``"ppg"`` (Bayer, patterned pixel grouping; CPU only), ``"rcd"`` (Bayer, ratio-corrected, experimental; CPU only) or ``"auto"`` (the best validated
-                algorithm for the sensor: edge-aware on Bayer and X-Trans) for RGB outputs.
+            demosaic: ``"auto"`` (default: the best validated algorithm for the sensor, edge-aware on
+                Bayer and X-Trans, bilinear otherwise; may change between minor versions),
+                ``"bilinear"`` (the fastest), ``"half-size"`` (2x2 binning), ``"edge-aware"``
+                (Bayer and X-Trans: cleaner edges, several times slower; runs on the GPU backend too),
+                ``"ahd"`` (Bayer, homogeneity-directed; CPU only), ``"ppg"`` (Bayer, patterned pixel
+                grouping; CPU only) or ``"rcd"`` (Bayer, ratio-corrected, experimental; CPU only)
+                for RGB outputs.
             apply_opcodes: apply DNG opcode lists (bad pixels, gain maps...).
             corruption_policy: ``"recover"`` (default; zero-fill what is missing and report it
                 in :attr:`Frame.warnings`) or ``"strict"`` (raise :class:`CorruptFileError`).
@@ -627,7 +630,7 @@ class RawFile:
         *,
         backend: str = "auto",
         threads: Optional[int] = None,
-        demosaic: str = "bilinear",
+        demosaic: str = "auto",
         apply_opcodes: bool = True,
         corruption_policy: str = "recover",
         exposure: float = 0.0,

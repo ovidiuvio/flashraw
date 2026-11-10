@@ -34,7 +34,7 @@ class _RawFile:
         threads: Optional[int] = None,
         region: Optional[Tuple[int, int, int, int]] = None,
         crop: Union[bool, str, None] = None,
-        demosaic: str = "bilinear",
+        demosaic: str = "auto",
         apply_opcodes: bool = True,
         corruption_policy: str = "recover",
         tile: Optional[int] = None,

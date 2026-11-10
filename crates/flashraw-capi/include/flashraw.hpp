@@ -324,7 +324,7 @@ struct open_options {
 struct decode_options {
     flashraw::backend backend = flashraw::backend::automatic;
     flashraw::output_format output = flashraw::output_format::raw_u16;
-    flashraw::demosaic demosaic = flashraw::demosaic::bilinear;
+    flashraw::demosaic demosaic = flashraw::demosaic::auto_;
     flashraw::highlights highlights = flashraw::highlights::clip;
     flashraw::white_balance white_balance = flashraw::white_balance::as_shot;
     /// Red, green and blue multipliers of the camera RGB, replacing `white_balance` (all zero: not set).

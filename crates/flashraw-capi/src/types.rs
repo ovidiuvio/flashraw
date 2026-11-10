@@ -55,7 +55,7 @@ pub enum flashraw_output_format {
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum flashraw_demosaic {
-    /// Bilinear interpolation. The default.
+    /// Bilinear interpolation, the fastest full-resolution demosaic.
     FLASHRAW_DEMOSAIC_BILINEAR = 0,
     /// 2x2 superpixel binning: half resolution, fastest.
     FLASHRAW_DEMOSAIC_HALF_SIZE = 1,
@@ -64,7 +64,7 @@ pub enum flashraw_demosaic {
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
     /// Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear). CPU only (the GPU backend decodes on the CPU for it).
     FLASHRAW_DEMOSAIC_AHD = 3,
-    /// The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
+    /// The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). The default. May change between minor versions.
     FLASHRAW_DEMOSAIC_AUTO = 4,
     /// Patterned pixel grouping for Bayer sensors (other sensors: error). CPU only (the GPU backend decodes on the CPU for it).
     FLASHRAW_DEMOSAIC_PPG = 5,
@@ -454,7 +454,7 @@ pub struct flashraw_decode_options {
     pub backend: i32,
     /// `flashraw_output_format`. Default `FLASHRAW_OUTPUT_RAW_U16`.
     pub output: i32,
-    /// `flashraw_demosaic`. Default `FLASHRAW_DEMOSAIC_BILINEAR`.
+    /// `flashraw_demosaic`. Default `FLASHRAW_DEMOSAIC_AUTO`.
     pub demosaic: i32,
     /// `flashraw_corruption_policy`. Default `FLASHRAW_CORRUPTION_RECOVER`.
     pub corruption_policy: i32,

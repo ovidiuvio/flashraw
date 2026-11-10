@@ -209,7 +209,7 @@ enum flashraw_demosaic
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
     /**
-     * Bilinear interpolation. The default.
+     * Bilinear interpolation, the fastest full-resolution demosaic.
      */
     FLASHRAW_DEMOSAIC_BILINEAR = 0,
     /**
@@ -226,7 +226,7 @@ enum flashraw_demosaic
      */
     FLASHRAW_DEMOSAIC_AHD = 3,
     /**
-     * The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). May change between minor versions.
+     * The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). The default. May change between minor versions.
      */
     FLASHRAW_DEMOSAIC_AUTO = 4,
     /**
@@ -945,7 +945,7 @@ typedef struct flashraw_decode_options {
      */
     int32_t output;
     /**
-     * `flashraw_demosaic`. Default `FLASHRAW_DEMOSAIC_BILINEAR`.
+     * `flashraw_demosaic`. Default `FLASHRAW_DEMOSAIC_AUTO`.
      */
     int32_t demosaic;
     /**

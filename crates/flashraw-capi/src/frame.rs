@@ -43,7 +43,7 @@ pub(crate) fn default_decode_options() -> flashraw_decode_options {
         size: std::mem::size_of::<flashraw_decode_options>() as u32,
         backend: flashraw_backend::FLASHRAW_BACKEND_AUTO as i32,
         output: flashraw_output_format::FLASHRAW_OUTPUT_RAW_U16 as i32,
-        demosaic: flashraw_demosaic::FLASHRAW_DEMOSAIC_BILINEAR as i32,
+        demosaic: flashraw_demosaic::FLASHRAW_DEMOSAIC_AUTO as i32,
         corruption_policy: flashraw_corruption_policy::FLASHRAW_CORRUPTION_RECOVER as i32,
         threads: 0,
         crop: 1,

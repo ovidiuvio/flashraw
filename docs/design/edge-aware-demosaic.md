@@ -1,11 +1,11 @@
 # Edge-aware demosaic (`Demosaic::EdgeAware`)
 
-`Demosaic::Bilinear` (the default) is the fastest full-resolution demosaic: on Bayer sensors it averages the
+`Demosaic::Bilinear` is the fastest full-resolution demosaic: on Bayer sensors it averages the
 nearest samples of each colour, and on X-Trans and other patterns it averages the same-colour samples of the 3x3
 window. That is cheap and has no ringing, but it zippers along edges and, on X-Trans (red and blue are only one
 pixel in five), leaves isolated green, magenta and blue dots where bright and dark detail meet
-([issue #3](https://github.com/ybouane/flashraw/issues/3)). `Demosaic::EdgeAware` is the opt-in alternative for
-Bayer and X-Trans sensors. Other patterns (four-colour, Foveon, monochrome, staggered) use bilinear.
+([issue #3](https://github.com/ybouane/flashraw/issues/3)). `Demosaic::EdgeAware` is the alternative for
+Bayer and X-Trans sensors, and what the default, `Demosaic::Auto`, picks on them. Other patterns (four-colour, Foveon, monochrome, staggered) use bilinear.
 
 | | CLI | Python | JavaScript | C |
 |---|---|---|---|---|

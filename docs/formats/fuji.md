@@ -130,9 +130,9 @@ such.
 
 ## Developing X-Trans images
 
-X-Trans samples red and blue one pixel in five, so the default `bilinear` develop (a 3x3 same-colour average)
+X-Trans samples red and blue one pixel in five, so a `bilinear` develop (a 3x3 same-colour average)
 leaves isolated green, magenta and blue dots where bright and dark detail meet. For developed output
-(`rgba8`, `rgb16`, `linear-rgb*`) use `Demosaic::EdgeAware` (`--demosaic edge-aware`): directionally weighted 7x7
+(`rgba8`, `rgb16`, `linear-rgb*`) FlashRaw uses `Demosaic::EdgeAware` (`--demosaic edge-aware`, what the default `auto` picks on X-Trans): directionally weighted 7x7
 filters and a colour-difference median, about 4 to 5 times the develop time on the CPU (the GPU backend runs it too: 52 ms of kernel time for a
 40 MP file on an Apple M1 Ultra, see [GPU backend](../gpu.md#edge-aware-demosaic)). Method and numbers:
 [edge-aware demosaic](../design/edge-aware-demosaic.md).

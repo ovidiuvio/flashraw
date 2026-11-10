@@ -1,8 +1,8 @@
 # Demosaic audit, results and open work
 
 What was measured on the demosaic algorithms (Linux x86-64, 8 cores / 16 threads), what was built from it, and
-what is left. Nothing here changes a default: `Demosaic::Bilinear` stays the default; `Auto`, `Ppg` and `Rcd`
-are opt-in.
+what is left. The default is `Demosaic::Auto` (edge-aware on Bayer and X-Trans, bilinear on other patterns); `Ppg`, `Rcd`,
+`Ahd` and `Bilinear` are opt-in. The published RAW-to-RGB speed comparisons stay on bilinear against LibRaw's linear.
 
 ## Algorithm selection
 
