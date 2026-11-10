@@ -54,7 +54,7 @@ one process per file; input read into memory before timing):
           dcraw     whole process `dcraw -c -D -4 FILE > /dev/null`
   rgb     FlashRaw  open + decode + bilinear demosaic + as-shot WB + colour matrix +
                     sRGB 8-bit + orientation (`--output rgba8 --demosaic bilinear --backend simd`;
-                    bilinear is pinned: the default `auto` is edge-aware on Bayer and X-Trans)
+                    bilinear is pinned: the default `auto` is AHD on Bayer, edge-aware on X-Trans)
           LibRaw    open_buffer() + unpack() + dcraw_process() (user_qual=0 bilinear,
                     use_camera_wb=1, output_bps=8, default sRGB output) + dcraw_make_mem_image()
           lcms      LibRaw to 16-bit linear ProPhoto (dcraw_process, bilinear, camera WB,
@@ -64,6 +64,11 @@ one process per file; input read into memory before timing):
           dcraw     whole process `dcraw -c -q 0 -w FILE > /dev/null`
           RawSpeed  (no RGB pipeline: not measured)
   rgb-gpu FlashRaw only, `--backend gpu --output rgba8` (frame downloaded to host memory)
+  rgb-default  each library's default demosaic, otherwise as rgb: FlashRaw `--demosaic auto`
+          (AHD on Bayer, edge-aware on X-Trans), LibRaw user_qual left at -1 (AHD on Bayer,
+          Markesteijn 3-pass on X-Trans). Not part of the published RAW->RGB comparison.
+  FlashRaw records its stage times (`stages`); LibRaw records open+unpack and dcraw_process +
+  dcraw_make_mem_image separately, so a loss can be traced to decoding or developing.
 
 Threads: "all" = every core (FlashRaw default; RawSpeed, the LibRaw OpenMP build and the lcms2
 transform with OpenMP's default team; rawler with rayon); "1" = one thread (RAYON_NUM_THREADS=1,
@@ -116,7 +121,7 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--version")) { printf("%s\n", LibRaw::version()); return 0; }
     else file = argv[i];
   }
-  if (!file) { fprintf(stderr, "usage: libraw_bench [--iterations N] [--mode decode|rgb|rgb-half] FILE\n"); return 2; }
+  if (!file) { fprintf(stderr, "usage: libraw_bench [--iterations N] [--mode decode|rgb|rgb-half|rgb-default] FILE\n"); return 2; }
   FILE *f = fopen(file, "rb");
   if (!f) { perror(file); return 2; }
   std::vector<char> buf;
@@ -126,7 +131,7 @@ int main(int argc, char **argv) {
   if (fread(buf.data(), 1, buf.size(), f) != buf.size()) return 2;
   fclose(f);
   bool rgb = !strncmp(mode, "rgb", 3);
-  std::vector<double> total;
+  std::vector<double> total, unpacked, processed;
   int err = 0;
   int width = 0, height = 0;
   for (int it = 0; it < iters + 1 && !err; it++) {  // iteration 0 is a warm-up
@@ -134,8 +139,11 @@ int main(int argc, char **argv) {
     double t0 = now_ms();
     int rc = r->open_buffer(buf.data(), buf.size());
     if (rc == LIBRAW_SUCCESS) rc = r->unpack();
+    double tu = now_ms();
     if (rc == LIBRAW_SUCCESS && rgb) {
-      r->imgdata.params.user_qual = 0;      // bilinear
+      // "rgb-default" keeps LibRaw's default interpolation (user_qual -1: AHD on Bayer,
+      // Markesteijn 3-pass on X-Trans); the others use bilinear.
+      if (strcmp(mode, "rgb-default")) r->imgdata.params.user_qual = 0;
       r->imgdata.params.use_camera_wb = 1;  // as-shot white balance
       r->imgdata.params.output_bps = 8;
       if (!strcmp(mode, "rgb-half")) r->imgdata.params.half_size = 1;
@@ -150,20 +158,24 @@ int main(int argc, char **argv) {
     width = r->imgdata.sizes.raw_width;
     height = r->imgdata.sizes.raw_height;
     if (rc != LIBRAW_SUCCESS) err = rc;
-    else if (it > 0) total.push_back(t1 - t0);
+    else if (it > 0) { total.push_back(t1 - t0); unpacked.push_back(tu - t0); processed.push_back(t1 - tu); }
     delete r;
   }
   std::sort(total.begin(), total.end());
+  std::sort(unpacked.begin(), unpacked.end());
+  std::sort(processed.begin(), processed.end());
   struct rusage ru;
   getrusage(RUSAGE_SELF, &ru);
   long rss_kb = ru.ru_maxrss;
 #ifdef __APPLE__
   rss_kb /= 1024;  // bytes on macOS
 #endif
+  auto med = [](const std::vector<double> &v) { return v.empty() ? -1.0 : v[v.size() / 2]; };
   printf("{\"error\":%d,\"error_text\":\"%s\",\"ms_median\":%.4f,\"ms_min\":%.4f,\"runs\":%zu,"
+         "\"unpack_ms_median\":%.4f,\"process_ms_median\":%.4f,"
          "\"raw_width\":%d,\"raw_height\":%d,\"maxrss_kb\":%ld}\n",
-         err, err ? esc(libraw_strerror(err)).c_str() : "", total.empty() ? -1.0 : total[total.size() / 2],
-         total.empty() ? -1.0 : total[0], total.size(), width, height, rss_kb);
+         err, err ? esc(libraw_strerror(err)).c_str() : "", med(total),
+         total.empty() ? -1.0 : total[0], total.size(), med(unpacked), med(processed), width, height, rss_kb);
   return 0;
 }
 """
@@ -504,7 +516,8 @@ LIBS = {
 }
 # Which library measures which mode. "rgb" for lcms is the LibRaw + Little CMS pipeline.
 LIB_MODES = {
-    "flashraw": ("decode", "rgb", "rgb-half", "rgb-gpu"), "libraw": ("decode", "rgb", "rgb-half"),
+    "flashraw": ("decode", "rgb", "rgb-half", "rgb-gpu", "rgb-default"),
+    "libraw": ("decode", "rgb", "rgb-half", "rgb-default"),
     "rawspeed": ("decode",), "rawler": ("decode", "rgb"), "rawpy": ("decode", "rgb"),
     "dcraw": ("decode", "rgb"), "lcms": ("rgb",),
 }
@@ -825,6 +838,7 @@ def cmd_run(a):
             cmd = [a.flashraw, "benchmark", "--json", "--iterations", it]
             cmd += {"decode": ["--output", "raw-u16"], "rgb": ["--output", "rgba8", "--demosaic", "bilinear"],
                     "rgb-half": ["--output", "rgba8", "--demosaic", "half"],
+                    "rgb-default": ["--output", "rgba8", "--demosaic", "auto"],
                     "rgb-gpu": ["--output", "rgba8", "--demosaic", "bilinear", "--backend", "gpu"]}[mode]
             if mode != "rgb-gpu":
                 cmd += ["--backend", "simd"]  # CPU only (a GPU build's `auto` may pick the GPU)
@@ -837,13 +851,15 @@ def cmd_run(a):
                 "rss_mb": (j.get("maxrss_kb") or 0) / 1024,
                 "camera": j.get("camera"), "format": j.get("format"), "compression": j.get("compression"),
                 "backend": (j.get("backend") or {}).get("decode"),
-                "postprocess": (j.get("backend") or {}).get("postprocess")}
+                "postprocess": (j.get("backend") or {}).get("postprocess"),
+                "stages": j.get("stages")}
         elif lib == "libraw":
             exe = build["libraw_st"] if threads == "1" else build.get("libraw_omp", build["libraw_st"])
             j, err, _ = run_one([exe, "--iterations", it, "--mode", "decode" if mode == "decode" else mode, path], env)
             rec = {"ok": False, "error": err} if j is None else (
                 {"ok": False, "error": j["error_text"], "code": j["error"]} if j["error"] else
-                {"ok": True, "ms": j["ms_median"], "ms_min": j["ms_min"], "rss_mb": j["maxrss_kb"] / 1024})
+                {"ok": True, "ms": j["ms_median"], "ms_min": j["ms_min"], "rss_mb": j["maxrss_kb"] / 1024,
+                 "stages": {"open+unpack": j.get("unpack_ms_median"), "process": j.get("process_ms_median")}})
         elif lib == "dcraw" and f.lower().endswith(".cr3"):
             # dcraw 9.28 parses CR3 containers but its CRX decoder is an empty stub: it
             # "succeeds" without reading any image data, so do not count it.
@@ -986,6 +1002,7 @@ COMPARISONS = [
     ("rgb", "rawler", "RAW→RGB vs rawler"),
     ("rgb", "rawpy", "RAW→RGB vs rawpy"),
     ("rgb", "dcraw", "RAW→RGB vs dcraw"),
+    ("rgb-default", "libraw", "RAW→RGB, default demosaics (FlashRaw auto, LibRaw AHD / Markesteijn), vs LibRaw"),
 ]
 
 
@@ -1196,7 +1213,8 @@ def main():
     r.add_argument("--bin-dir", default=DEFAULT_BIN)
     r.add_argument("--iterations", type=int, default=7)
     r.add_argument("--libs", nargs="+", default=["flashraw", "libraw", "rawspeed"], choices=list(LIBS))
-    r.add_argument("--modes", nargs="+", default=["decode", "rgb"], choices=["decode", "rgb", "rgb-half", "rgb-gpu"])
+    r.add_argument("--modes", nargs="+", default=["decode", "rgb"],
+                   choices=["decode", "rgb", "rgb-half", "rgb-gpu", "rgb-default"])
     r.add_argument("--threads", nargs="+", default=["all", "1"], choices=["all", "1"])
     r.add_argument("--out", required=True)
     r.add_argument("--resume", action="store_true", help="append, skipping measurements already in --out")
