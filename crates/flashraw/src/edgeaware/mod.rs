@@ -26,6 +26,11 @@
 //!    that colour does not leak across a luminance edge; X-Trans, the green plus the 3x3
 //!    median of the differences of the filtered planes. Pass 2, both: the same weighted mean
 //!    over the pass-1 differences of all pixels of the 3x3 window, with `s = 0.1 G + 0.007`.
+//!    X-Trans, also at a red or blue site: green moves towards the measured sample minus the
+//!    pass-2 difference, fully on clean frames and less as `beta` (step 5) grows (`1 - 2 beta`).
+//!    The filtered green at those sites is softer than the measured green next to them, which
+//!    left a texture tied to the 6x6 pattern ("pixelated" lines and edges); from the measured
+//!    sample it carries that pixel's own detail, as the green sites do.
 //! 5. On noisy frames: every channel of the pixel moves by `beta` towards the
 //!    mean of its 3x3 window, weighted as in step 4 with `s = 0.2 G + 0.015`. `beta` is 0 for
 //!    clean frames and up to 0.5 for noisy ones, from a noise estimate over 48 rows of the
@@ -540,6 +545,9 @@ impl Plan {
         // pixel (measured and pass-1 values), for the two colours the pixel does not measure.
         let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
         let mut v2 = vec![[0f32; 3]; e2r * e2c];
+        // Weight of the green re-estimate at red and blue sites (X-Trans only): full on clean
+        // frames, none on the noisiest (the measured red and blue samples carry more noise).
+        let xg = if p == 6 { (1.0 - 2.0 * self.beta).clamp(0.0, 1.0) } else { 0.0 };
         let mut inv = vec![0f32; e2c];
         for i in 0..e2r {
             let c0 = (i + 2) * ec + 2;
@@ -569,11 +577,23 @@ impl Plan {
                 let (rc, bc) = (&r[c0 + j0..c0 + j0 + len], &bl[c0 + j0..c0 + j0 + len]);
                 let o = &mut v2[i * e2c + j0..i * e2c + j0 + len];
                 for l in 0..len {
-                    let gv = gc[j0 + l];
+                    let (dr, db) = (sdr[l] / sw[l], sdb[l] / sw[l]);
+                    // X-Trans: green at a red or blue site moves towards the measured sample minus
+                    // the cleaned colour difference (module docs, step 4).
+                    let g0 = gc[j0 + l];
+                    let gv = if xg == 0.0 {
+                        g0
+                    } else if own_r[l] != 0.0 {
+                        g0 + xg * ((rc[l] - dr) - g0)
+                    } else if own_b[l] != 0.0 {
+                        g0 + xg * ((bc[l] - db) - g0)
+                    } else {
+                        g0
+                    };
                     o[l] = [
-                        if own_r[l] != 0.0 { rc[l] } else { gv + sdr[l] / sw[l] },
+                        if own_r[l] != 0.0 { rc[l] } else { gv + dr },
                         gv,
-                        if own_b[l] != 0.0 { bc[l] } else { gv + sdb[l] / sw[l] },
+                        if own_b[l] != 0.0 { bc[l] } else { gv + db },
                     ];
                 }
             });

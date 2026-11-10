@@ -42,6 +42,20 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
    `B - G` of the filtered planes by their 3x3 median (the usual colour-difference median of classical demosaics),
    pass 2 is the Bayer pass 2. Both cost some colour resolution at fine saturated edges.
 
+   X-Trans, then: green at a red or blue site moves towards the measured sample minus the pass-2 difference, by
+   `1 - 2 beta` (fully on clean frames, not at all on the noisiest, whose red and blue samples are noisier than the
+   filtered green). The filtered green there is softer than the measured green of the neighbouring sites: in textured
+   areas of real files the luma Laplacian at green sites was 1.35 to 1.72 times that at red and blue sites (LibRaw
+   Markesteijn 1.09 to 1.23), a texture tied to the 6x6 pattern that makes thin lines and edges look stair-stepped
+   ("pixelated"). With the re-estimate the ratio is 1.01 to 1.12, the real-file speckle index over the 10 X-Trans files
+   falls from 1.84 to 0.90 and the fine-detail index rises from 0.0254 to 0.0292 (Markesteijn 0.0285). The held-out
+   tiles score it lower on clean mosaics (41.14 / 38.53 against 42.00 / 39.37 dB; unchanged under noise): they are 2x2
+   binned and softer than real files at the pixel scale, so restored detail counts as error there, the disagreement
+   between tiles and real files noted in the [roadmap](demosaic-roadmap.md). Tried first and dropped: sharper
+   direction weights (`1 / E^p` with p up to 6, or a smaller `eps`) and a small smoothing floor, which moved the
+   pattern-locked energy by under 10 %. At half strength the re-estimate keeps 41.52 / 38.96 dB clean but leaves the
+   site ratio at 1.35 to 1.40.
+
    Choosing the X-Trans stage (held-out photo tiles: PSNR / edge PSNR clean, PSNR at moderate and high noise; then
    the real-file speckle index below over 10 X-Trans files). With the shipped 5x5 filters the median alone scored
    41.92 / 39.20, 37.63, 34.43 and 2.18; median then pass 2 scores 42.00 / 39.37, 37.69, 34.51 and 1.84, better on
@@ -122,7 +136,8 @@ PSNR against clean references understates the main effect, which is the removal 
 zipper patterns (step 4 trades a little fidelity for that: without it Bayer clean would be 37.7 over all pixels and
 X-Trans 37.95 / 32.3). On the file of issue #3 (Fujifilm X-T50, DSCF0120.RAF) the chroma high-frequency index of the
 issue (mean Laplacian of R-G and B-G over the Laplacian of luma, of the sRGB-encoded 16-bit output) goes from
-4.29 with bilinear to 1.83 (2.24 with the earlier one-pass median X-Trans stage).
+4.29 with bilinear to 0.84 (1.83 before the green re-estimate at red and blue sites, 2.24 with the earlier one-pass
+median X-Trans stage; the issue measured 2.13 for LibRaw's default).
 
 ## Limits
 

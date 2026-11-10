@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Edge-aware on X-Trans (the default there): green at red and blue sites is re-estimated from the measured sample
+  and the cleaned colour difference (fully on clean frames, less on noisy ones; CPU and GPU). The filtered green at
+  those sites was softer than at green sites, a texture tied to the 6x6 pattern that made thin lines look
+  stair-stepped. Real-file speckle index over 10 X-Trans files 1.84 -> 0.90 (LibRaw Markesteijn 2.01), fine detail
+  0.0254 -> 0.0292; issue #3's metric on DSCF0120.RAF 1.83 -> 0.84. The 2x2-binned ground-truth tiles score it lower on
+  clean mosaics (42.00 / 39.37 -> 41.14 / 38.53 dB), unchanged under noise. Output changes.
 - The default demosaic of RGB outputs is now `Demosaic::Auto` in Rust, the command line (`--demosaic auto`), Python,
   JavaScript and C/C++ (`FLASHRAW_DEMOSAIC_AUTO` from `flashraw_decode_options_init`): AHD on Bayer sensors, edge-aware
   on X-Trans, bilinear on other patterns; an explicit `noise_reduction` level selects edge-aware on Bayer too. RGB

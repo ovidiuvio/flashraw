@@ -863,7 +863,7 @@ and the colour error). Noise is added to the mosaic before development (variance
 | X-Trans, photographic tiles | clean | moderate noise | high noise |
 |---|---:|---:|---:|
 | FlashRaw bilinear | 41.68 / 38.00 | 36.69 / 34.86 | 33.07 / 31.96 |
-| **FlashRaw edge-aware** | 42.00 / 39.37 | 37.69 / 36.13 | 34.51 / 33.47 |
+| **FlashRaw edge-aware** | 41.14 / 38.53 | 37.70 / 36.16 | 34.51 / 33.47 |
 | LibRaw Markesteijn 1-pass | 41.75 / 39.26 | 35.27 / 34.31 | 31.32 / 30.77 |
 | LibRaw Markesteijn 3-pass | 41.72 / 39.23 | 35.21 / 34.24 | 31.25 / 30.70 |
 | LibRaw VNG | 40.68 / 37.88 | 34.58 / 33.46 | 30.65 / 30.04 |
@@ -873,9 +873,12 @@ smooths noisy frames (step 5 of the [design note](design/edge-aware-demosaic.md)
 edge-aware has the best edge PSNR (39.43, then FlashRaw RCD 39.38 and LibRaw DCB 39.30); FlashRaw RCD has the lowest
 colour error of every method on clean tiles (`truth.json`) and is above LibRaw DCB, the best LibRaw demosaic here, at every noise level;
 FlashRaw PPG and AHD are above LibRaw PPG and AHD at every noise level (AHD by 0.2 dB clean and 0.7 to 0.8 dB under
-noise, because it blends its two candidates instead of picking one, [design note](design/ahd-demosaic.md)). On clean
-X-Trans mosaics FlashRaw edge-aware has the best PSNR and edge PSNR (42.00 / 39.37 against 41.75 / 39.26 for LibRaw
-Markesteijn 1-pass); Markesteijn keeps a slightly lower colour error on clean tiles (`truth.json`).
+noise, because it blends its two candidates instead of picking one, [design note](design/ahd-demosaic.md)). On noisy
+X-Trans mosaics FlashRaw edge-aware is the closest by 2.4 dB and more; on clean ones LibRaw Markesteijn 1-pass is
+(41.75 / 39.26 against 41.14 / 38.53) and keeps a slightly lower colour error (`truth.json`). FlashRaw's clean X-Trans
+score was 42.00 / 39.37 before green at red and blue sites was taken from the measured samples
+([design note](design/edge-aware-demosaic.md), step 4): that removes a texture tied to the 6x6 pattern on real files
+(below), and these binned tiles, softer than real files at the pixel scale, count the restored detail against it.
 
 **On real files.** No reference exists, so two indexes of the sRGB-encoded 16-bit output of the central 1024x1024 crop: the *colour speckle*
 index (mean Laplacian of R-G and B-G over the Laplacian of luma; lower = fewer false-colour dots and zipper patterns) and
@@ -886,7 +889,7 @@ a noisy file is mostly noise, so a higher detail value is not always better deta
 | Mean colour speckle index (lower = cleaner) | Bayer | X-Trans |
 |---|---:|---:|
 | FlashRaw bilinear | 5.18 | 4.34 |
-| **FlashRaw edge-aware** | 2.09 | 1.84 |
+| **FlashRaw edge-aware** | 2.09 | 0.90 |
 | **FlashRaw AHD** (Bayer only) | 1.44 | |
 | **FlashRaw PPG** (Bayer only) | 2.07 | |
 | **FlashRaw RCD** (Bayer only) | 2.01 | |
@@ -904,8 +907,10 @@ for LibRaw AAHD, the next, and 1.57 for LibRaw AHD (edge-aware 1.97, PPG 2.00, R
 index is lower than LibRaw AHD's (0.0168 against 0.0189) because blending the two candidates also averages noise, which
 the index counts as detail; against ground truth it is the closer of the two at every noise level (above). FlashRaw
 edge-aware is far cleaner than any bilinear and matches LibRaw DCB on Bayer; on X-Trans it is the cleanest demosaic
-(1.84 against 1.96 for LibRaw VNG and 2.02 for Markesteijn 1-pass), with a lower fine-detail index than Markesteijn
-(0.0254 against 0.0283). `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
+by far (0.90 against 1.96 for LibRaw VNG and 2.01 for Markesteijn 3-pass), with a fine-detail index level with
+Markesteijn's (0.0292 against 0.0285; 0.0254 before the green re-estimate). The re-estimate also evens out detail
+across the pattern: in textured areas of an X-H2 frame the luma Laplacian at green sites was 1.72 times that at red and
+blue sites (Markesteijn 1.23), which shows as stair-stepped thin lines; it is now 1.01. `Demosaic::EdgeAware` stays the recommended mode when the goal is the smallest error, `Demosaic::Ahd` when it is the
 fewest false-colour dots.
 
 **Speed.** The post-process stage (demosaic, white balance, colour matrix, 16-bit sRGB encoding) of an 18 MP Bayer file

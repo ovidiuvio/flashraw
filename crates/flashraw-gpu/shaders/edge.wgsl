@@ -277,34 +277,41 @@ fn edge_bayer_v2(@builtin(global_invocation_id) gid: vec3<u32>) {
     let own = e_colour(i, j);
     let gc = sp(3u, idx);
     let inv = 1.0 / (0.1 * max(gc, 0.0) + 0.007);
-    var v = vec3<f32>(sp(2u, idx), gc, sp(4u, idx));
-    for (var q = 0u; q < 2u; q++) {
-        let ch = q * 2u;
-        if (own == ch) {
-            continue;
-        }
-        var sw = 0.0;
-        var sd = 0.0;
-        for (var dy = -1; dy <= 1; dy++) {
-            for (var dx = -1; dx <= 1; dx++) {
-                let ii = i + dy;
-                let jj = j + dx;
-                if (!e_inside(ii, jj)) {
-                    continue;
-                }
-                let k = e_idx(ii, jj);
-                let e = (sp(3u, k) - gc) * inv;
-                let wt = 1.0 / (1.0 + e * e);
-                sw += wt;
-                sd += wt * sp(q, k);
+    // The gated means of the pass-1 differences R-G (d.x) and B-G (d.y).
+    var sw = 0.0;
+    var sd = vec2<f32>(0.0);
+    for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+            let ii = i + dy;
+            let jj = j + dx;
+            if (!e_inside(ii, jj)) {
+                continue;
             }
+            let k = e_idx(ii, jj);
+            let e = (sp(3u, k) - gc) * inv;
+            let wt = 1.0 / (1.0 + e * e);
+            sw += wt;
+            sd = sd + wt * vec2<f32>(sp(0u, k), sp(1u, k));
         }
-        let r = gc + sd / sw;
-        if (ch == 0u) {
-            v.x = r;
-        } else {
-            v.z = r;
+    }
+    let d = sd / sw;
+    // X-Trans: green at a red or blue site moves towards the measured sample minus the cleaned
+    // difference, fully on clean frames and less on noisy ones (CPU: `develop_chroma`).
+    var g = gc;
+    if (E.period == 6u) {
+        let xg = clamp(1.0 - 2.0 * E.beta, 0.0, 1.0);
+        if (own == 0u) {
+            g = gc + xg * ((sp(2u, idx) - d.x) - gc);
+        } else if (own == 2u) {
+            g = gc + xg * ((sp(4u, idx) - d.y) - gc);
         }
+    }
+    var v = vec3<f32>(g + d.x, g, g + d.y);
+    if (own == 0u) {
+        v.x = sp(2u, idx);
+    }
+    if (own == 2u) {
+        v.z = sp(4u, idx);
     }
     S[5u * E.n + idx] = v.x;
     S[6u * E.n + idx] = v.y;

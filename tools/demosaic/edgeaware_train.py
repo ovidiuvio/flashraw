@@ -166,7 +166,8 @@ def chroma_two_pass(o, cm, xtrans):
     (R-G or B-G) at the R or B sites of the 3x3 window, a site weighing 1 / (1 + e^2) with
     e = (G_site - G) / (0.2 G + 0.015); X-Trans, the 3x3 median of the differences of the filtered planes. Pass 2,
     both: the same weighted mean over the pass-1 differences of every pixel of the window, with s = 0.1 G + 0.007.
-    Measured samples are kept."""
+    Measured samples are kept. X-Trans, clean frames: green at a red or blue site becomes the measured sample minus
+    the pass-2 difference (Rust: weight 1 - 2 beta, 1 on clean frames)."""
     G = o[..., 1]
     H, W = G.shape
     def window(a):
@@ -177,7 +178,7 @@ def chroma_two_pass(o, cm, xtrans):
         s = sr * np.maximum(G, 0) + sa
         return [1.0 / (1.0 + ((g - G) / s) ** 2) for g in gs]
     w1, w2 = gate(0.2, 0.015), gate(0.1, 0.007)
-    out = [o[..., 0], G, o[..., 2]]
+    d2 = {}
     for ch in (0, 2):
         site = (cm == ch)
         if xtrans:
@@ -188,7 +189,11 @@ def chroma_two_pass(o, cm, xtrans):
             mixed = sd / np.maximum(sw, 1e-12)
         d1 = np.where(site, o[..., ch] - G, mixed)
         sw2 = sum(w2); sd2 = sum(w * d for w, d in zip(w2, window(d1)))
-        out[ch] = np.where(site, o[..., ch], G + sd2 / sw2)
+        d2[ch] = sd2 / sw2
+    Gn = G
+    if xtrans:
+        Gn = np.where(cm == 0, o[..., 0] - d2[0], np.where(cm == 2, o[..., 2] - d2[2], G))
+    out = [np.where(cm == 0, o[..., 0], Gn + d2[0]), Gn, np.where(cm == 2, o[..., 2], Gn + d2[2])]
     return np.stack(out, -1)
 
 def chroma_stage(o, cm, pat):
