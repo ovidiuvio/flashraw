@@ -29,7 +29,7 @@ shaders/           WGSL sources (shared by native and browser builds, include_st
   unpack.wgsl      packed/u16 → u16 (+ LUT)
   normalize.wgsl   → black-subtracted, white-normalised f32
   develop.wgsl     fused develop (bilinear `develop`, 2x2 `develop_half`)
-  edge.wgsl        edge-aware demosaic: one entry point per stage (see "Edge-aware demosaic")
+  edge.wgsl        edge-aware and AHD demosaics: one entry point per stage (see "Edge-aware demosaic")
   to_texture.wgsl  RGBA8 buffer → rgba8unorm storage texture (interop)
 crates/flashraw/src/gpu.rs   facade: backend selection, GPU decode path, RawFrame::download
 ```
@@ -141,6 +141,12 @@ scratch buffer and the filter tables) has one entry point per stage:
 | `edge_bayer_d1` (Bayer) or `edge_xtrans_d1` (X-Trans) | R, G, B | pass 1 of the colour differences R-G and B-G: the luminance-gated mean of the measured ones (Bayer) or the 3x3 median (X-Trans) |
 | `edge_bayer_v2` (both) | R, G, B, pass-1 differences | pass 2: the luminance-gated mean of the pass-1 differences |
 | `develop_edge` | cleaned RGB | optional smoothing, white balance of the border, matrix, levels, encoding, orientation: the existing `finish` |
+
+AHD (`Demosaic::Ahd`, the default on Bayer sensors) uses the same bind group and scratch layout with 11 planes and a
+border of 6 pixels: `edge_mosaic`, then `ahd_green` (green along rows and columns), `ahd_lab` (perceptual coordinates of
+both candidates), `ahd_hom` (thresholds and homogeneity counts), `ahd_blend` (the candidates blended by their summed
+homogeneity, into the planes `develop_edge` reads, smoothing off). AHD decides with thresholds, so GPU rounding can
+change a count: see [the AHD notes](design/ahd-demosaic.md) for the measured differences.
 
 * **Filter tables** are uploaded once per CFA period (`GpuContext::edge_table`, ~95 KB for X-Trans) from the same
   `bayer.bin` / `xtrans.bin` the CPU uses; the directional filters are transposed so that the four directions of a

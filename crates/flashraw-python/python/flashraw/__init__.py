@@ -537,11 +537,11 @@ class RawFile:
             region: decode only this rectangle (sensor-buffer coordinates).
             crop: RGB outputs: crop to the recommended crop (default ``True``). Raw outputs
                 are never cropped by ``True``; ``"active"`` crops them to the active area.
-            demosaic: ``"auto"`` (default: the best validated algorithm for the sensor, edge-aware on
-                Bayer and X-Trans, bilinear otherwise; may change between minor versions),
+            demosaic: ``"auto"`` (default: the best validated algorithm for the sensor, AHD on Bayer,
+                edge-aware on X-Trans, bilinear otherwise; may change between minor versions),
                 ``"bilinear"`` (the fastest), ``"half-size"`` (2x2 binning), ``"edge-aware"``
                 (Bayer and X-Trans: cleaner edges, several times slower; runs on the GPU backend too),
-                ``"ahd"`` (Bayer, homogeneity-directed; CPU only), ``"ppg"`` (Bayer, patterned pixel
+                ``"ahd"`` (Bayer, homogeneity-directed), ``"ppg"`` (Bayer, patterned pixel
                 grouping; CPU only) or ``"rcd"`` (Bayer, ratio-corrected, experimental; CPU only)
                 for RGB outputs.
             apply_opcodes: apply DNG opcode lists (bad pixels, gain maps...).

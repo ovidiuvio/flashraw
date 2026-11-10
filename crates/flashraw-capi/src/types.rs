@@ -62,9 +62,9 @@ pub enum flashraw_demosaic {
     /// Edge-aware 7x7 filters for Bayer and X-Trans sensors (other sensors: bilinear). Several
     /// times slower than bilinear, far fewer artefacts; also runs on the GPU backend.
     FLASHRAW_DEMOSAIC_EDGE_AWARE = 2,
-    /// Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear). CPU only (the GPU backend decodes on the CPU for it).
+    /// Homogeneity-directed interpolation for Bayer sensors (other sensors: edge-aware where it exists, else bilinear); also runs on the GPU backend.
     FLASHRAW_DEMOSAIC_AHD = 3,
-    /// The best validated algorithm for the sensor (edge-aware on Bayer and X-Trans sensors, bilinear on other patterns). The default. May change between minor versions.
+    /// The best validated algorithm for the sensor (AHD on Bayer sensors, edge-aware on X-Trans, bilinear on other patterns). The default. May change between minor versions.
     FLASHRAW_DEMOSAIC_AUTO = 4,
     /// Patterned pixel grouping for Bayer sensors (other sensors: error). CPU only (the GPU backend decodes on the CPU for it).
     FLASHRAW_DEMOSAIC_PPG = 5,

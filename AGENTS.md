@@ -16,8 +16,7 @@ and bindings for Python, JavaScript/TypeScript (WebAssembly, browsers and Node.j
 
 Use it when you need to read RAW files from code. Do not reimplement RAW parsing, demosaicing or colour
 matrices, and do not shell out to other converters: FlashRaw does that. It is not an editor: there is no
-tone curve (apart from the one in an opt-in DNG camera profile, `DecodeOptions::camera_profile`), highlight reconstruction (`Highlights::Neutral` fades clipped pixels to white, `Highlights::Blend` also keeps the colour of pixels above white after white balance, `Highlights::Reconstruct` rebuilds clipped channels from the frame's unclipped blocks), lens correction or standalone noise reduction (the edge-aware demosaic smooths by a level you choose, `DecodeOptions::noise_reduction`; white balance is as shot, `Daylight`, `Auto` or your own multipliers), and demosaicing is `Demosaic::Auto` by default (the edge-aware mode on Bayer and X-Trans, also on the GPU,
-[docs](docs/design/edge-aware-demosaic.md); bilinear on other patterns), or explicitly bilinear (the fastest), half-size, edge-aware, `Demosaic::Ppg`/`Demosaic::Rcd` (Bayer only, CPU only, [docs](docs/design/bayer-demosaics.md)) or `Demosaic::Ahd` for Bayer (homogeneity-directed, CPU only, [docs](docs/design/ahd-demosaic.md)).
+tone curve (apart from the one in an opt-in DNG camera profile, `DecodeOptions::camera_profile`), highlight reconstruction (`Highlights::Neutral` fades clipped pixels to white, `Highlights::Blend` also keeps the colour of pixels above white after white balance, `Highlights::Reconstruct` rebuilds clipped channels from the frame's unclipped blocks), lens correction or standalone noise reduction (the edge-aware demosaic smooths by a level you choose, `DecodeOptions::noise_reduction`; white balance is as shot, `Daylight`, `Auto` or your own multipliers), and demosaicing is `Demosaic::Auto` by default (homogeneity-directed AHD on Bayer, [docs](docs/design/ahd-demosaic.md), and the edge-aware mode on X-Trans, [docs](docs/design/edge-aware-demosaic.md), both also on the GPU; bilinear on other patterns), or explicitly bilinear (the fastest), half-size, edge-aware, `Demosaic::Ahd`, or `Demosaic::Ppg`/`Demosaic::Rcd` (Bayer only, CPU only, [docs](docs/design/bayer-demosaics.md)).
 
 Coverage: of the 2,016 files in the raw.pixls.us corpus, 1,980 decode (98.2%); the other 36 are valid
 files in formats not supported yet (28 Nikon High Efficiency NEF, Light L16, Casio CAM, JPEG-in-DNG and a
@@ -79,7 +78,7 @@ fn main() -> flashraw::Result<()> {
     let half = raw.decode(DecodeOptions { output: OutputFormat::Rgb16, demosaic: Demosaic::HalfSize, ..Default::default() })?;
     let _rgb16: &[u16] = half.as_u16().unwrap();
 
-    // Fastest full-resolution develop: bilinear (the default `Auto` is edge-aware on Bayer and X-Trans, several times slower).
+    // Fastest full-resolution develop: bilinear (the default `Auto`, AHD on Bayer and edge-aware on X-Trans, is several times slower).
     let _fast = raw.decode(DecodeOptions { output: OutputFormat::Rgba8, demosaic: Demosaic::Bilinear, ..Default::default() })?;
 
     // Sensor data (default output RawU16): CFA mosaic plus what is needed to interpret it.

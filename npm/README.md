@@ -266,7 +266,7 @@ const f = await raw.decode({
   output: 'raw-u16',        // 'raw-u16' | 'raw-f32' | 'normalized' | 'linear-rgb' | 'linear-rgb16'
                             // | 'linear-rgb-f16' | 'rgba8' | 'rgb16'
   backend: 'auto',          // 'auto' | 'cpu' (scalar reference) | 'cpu-simd' | 'gpu'
-  demosaic: 'auto',         // RGB outputs: 'auto' (best validated for the sensor: edge-aware on Bayer/X-Trans) | 'bilinear' (fastest) | 'half-size' | 'edge-aware' | 'ahd' (Bayer, CPU only) | 'ppg' | 'rcd' (Bayer, CPU only)
+  demosaic: 'auto',         // RGB outputs: 'auto' (best validated for the sensor: AHD on Bayer, edge-aware on X-Trans) | 'bilinear' (fastest) | 'half-size' | 'edge-aware' | 'ahd' (Bayer) | 'ppg' | 'rcd' (Bayer, CPU only)
   whiteBalanceMultipliers: [2.1, 1, 1.6], // replaces whiteBalance (CPU only); whiteBalance also takes 'daylight'
   noiseReduction: 'auto',   // edge-aware smoothing: 'off' | 'low' | 'medium' | 'high' (not auto: CPU only)
   chromaticAberration: false, // RGB outputs: correct lateral chromatic aberration of Bayer frames (CPU only)

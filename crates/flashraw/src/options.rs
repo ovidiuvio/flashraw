@@ -221,10 +221,14 @@ pub enum Demosaic {
     EdgeAware,
     /// Homogeneity-directed interpolation (Hirakawa and Parks) for Bayer sensors: two
     /// candidate images, interpolated along rows and along columns, of which each pixel takes the
-    /// one that is locally the more homogeneous in a perceptual colour space. Clean on false
-    /// colour at the cost of fine edges against [`Demosaic::EdgeAware`] (lower PSNR on
-    /// ground-truth edges), and it does not smooth noise. Other sensors use the edge-aware
-    /// demosaic where it exists, else bilinear. CPU only (the GPU backend decodes on the CPU for it).
+    /// one that is locally the more homogeneous in a perceptual colour space (blended by their
+    /// homogeneity). The fewest false-colour artefacts on real Bayer files, at the cost of fine
+    /// edges against [`Demosaic::EdgeAware`] (lower PSNR on ground-truth edges), and it does not
+    /// smooth noise; what [`Demosaic::Auto`] picks on Bayer sensors. Other sensors use the
+    /// edge-aware demosaic where it exists, else bilinear. The GPU backend runs it too: it decides
+    /// with thresholds, so GPU rounding can change a homogeneity count and the GPU result can
+    /// differ from the CPU's on a small fraction of pixels (well under 1 % of the 8-bit samples of
+    /// the test frames on an Apple M1 Ultra).
     Ahd,
     /// Patterned pixel grouping for Bayer sensors: green interpolated along the row or column of
     /// smaller gradient, red and blue from colour differences (along the diagonal of smaller

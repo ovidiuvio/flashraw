@@ -2,13 +2,27 @@
 
 ## Unreleased
 
-- The default demosaic of RGB outputs is now `Demosaic::Auto` (edge-aware on Bayer and X-Trans, bilinear on other
-  patterns) in Rust, the command line (`--demosaic auto`), Python, JavaScript and C/C++ (`FLASHRAW_DEMOSAIC_AUTO` from
-  `flashraw_decode_options_init`). RGB output changes and develops several times slower; pass `bilinear` for the old
-  output and speed. Raw outputs are unchanged. The benchmark scripts pin `--demosaic bilinear` for the RAW-to-RGB
-  comparison.
+- The default demosaic of RGB outputs is now `Demosaic::Auto` in Rust, the command line (`--demosaic auto`), Python,
+  JavaScript and C/C++ (`FLASHRAW_DEMOSAIC_AUTO` from `flashraw_decode_options_init`): AHD on Bayer sensors, edge-aware
+  on X-Trans, bilinear on other patterns; an explicit `noise_reduction` level selects edge-aware on Bayer too. RGB
+  output changes and develops two to four times slower than bilinear; pass `bilinear` for the old output and speed.
+  Raw outputs are unchanged. `decode_gpu_async` resolves `Auto` too (it took it for bilinear). The benchmark scripts
+  pin `--demosaic bilinear` for the published RAW-to-RGB comparison and measure the defaults as a separate mode
+  (`rgb-default`, with per-stage times for both libraries).
+- AHD runs on the GPU backend (it was CPU only), so the default demosaic can use the GPU on Bayer files. GPU rounding
+  can change AHD's threshold decisions: on Metal 0.35 % to 0.75 % of the 8-bit samples of the test frames differ from
+  the CPU (`docs/design/ahd-demosaic.md`).
+- Faster develop, same output bit for bit: AHD and edge-aware hand their bands to colour conversion and encoding in
+  column chunks (no full-width band buffers, which ran out of memory bandwidth on 8 to 16 threads), edge-aware works
+  on 240-column chunks, AHD computes each neighbour step once, the X-Trans median shares column sorts, half-size reads
+  the CFA colours once per row, 8-bit encoding and the white balance and colour step of demosaiced chunks vectorise.
+  45 MP Nikon Z8 to RGBA8 with AHD on a Ryzen 7 9700X: develop 649 -> 554 ms on one thread, 175 -> 97 ms on 16; 40 MP
+  X-Trans with edge-aware 1,005 -> 896 ms and 205 -> 142 ms; half-size 218 -> 86 ms.
+- Faster decoders, same output: Panasonic v5/v7 (Lumix S5 18.6 -> 5.8 ms on one thread), Kodak 65000 (85.9 -> 68.9 ms),
+  16-bit little-endian uncompressed data copied as bytes and, on macOS, by one thread (Nikon D850 uncompressed on an
+  Apple M1 Ultra, all cores: up to 13.7 -> 3.4 ms).
 - `Demosaic::Auto` (`auto`, `FLASHRAW_DEMOSAIC_AUTO`): the best validated algorithm for the sensor, chosen when the file is
-  decoded (edge-aware on Bayer and X-Trans, bilinear on other patterns). The algorithm behind it may change
+  decoded (now AHD on Bayer, edge-aware on X-Trans, bilinear on other patterns; see above). The algorithm behind it may change
   between minor versions. `Demosaic::Ppg` (`ppg`, `FLASHRAW_DEMOSAIC_PPG`) and `Demosaic::Rcd` (`rcd`, `FLASHRAW_DEMOSAIC_RCD`,
   experimental): two more Bayer demosaics, CPU only; on a sensor that is not Bayer they fail with `Error::InvalidArgument` for
   RGB outputs. Ground-truth numbers and the experiments that were not kept: `docs/design/bayer-demosaics.md`,

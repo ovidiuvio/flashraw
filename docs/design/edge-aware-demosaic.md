@@ -5,7 +5,8 @@ nearest samples of each colour, and on X-Trans and other patterns it averages th
 window. That is cheap and has no ringing, but it zippers along edges and, on X-Trans (red and blue are only one
 pixel in five), leaves isolated green, magenta and blue dots where bright and dark detail meet
 ([issue #3](https://github.com/ybouane/flashraw/issues/3)). `Demosaic::EdgeAware` is the alternative for
-Bayer and X-Trans sensors, and what the default, `Demosaic::Auto`, picks on them. Other patterns (four-colour, Foveon, monochrome, staggered) use bilinear.
+Bayer and X-Trans sensors, and what the default, `Demosaic::Auto`, picks on X-Trans (on Bayer it picks
+[AHD](ahd-demosaic.md)). Other patterns (four-colour, Foveon, monochrome, staggered) use bilinear.
 
 | | CLI | Python | JavaScript | C |
 |---|---|---|---|---|

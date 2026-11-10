@@ -1,16 +1,24 @@
 # Demosaic audit, results and open work
 
 What was measured on the demosaic algorithms (Linux x86-64, 8 cores / 16 threads), what was built from it, and
-what is left. The default is `Demosaic::Auto` (edge-aware on Bayer and X-Trans, bilinear on other patterns); `Ppg`, `Rcd`,
-`Ahd` and `Bilinear` are opt-in. The published RAW-to-RGB speed comparisons stay on bilinear against LibRaw's linear.
+what is left. The default is `Demosaic::Auto` (AHD on Bayer, edge-aware on X-Trans, bilinear on other patterns); `Ppg`,
+`Rcd`, `EdgeAware` on Bayer and `Bilinear` are opt-in. The published RAW-to-RGB speed comparisons stay on bilinear
+against LibRaw's linear.
 
 ## Algorithm selection
 
-`Demosaic::Auto` picks the algorithm per sensor when the file is decoded: edge-aware on Bayer and X-Trans, bilinear on
-any other pattern. The choice depends only on the sensor type, so it is the same on every machine. It is edge-aware
-because that has the smallest error against ground truth on noisy tiles of both sensor types and on clean X-Trans
-tiles (see [benchmarks](../benchmarks.md) and the table in [bayer-demosaics](bayer-demosaics.md)); on clean Bayer
-tiles `Rcd` is level with it. `Ppg` and `Rcd` fail with `Error::InvalidArgument` on a sensor that is not Bayer when an
+`Demosaic::Auto` picks the algorithm per sensor when the file is decoded: AHD on Bayer, edge-aware on X-Trans,
+bilinear on any other pattern; an explicit smoothing level (`noise_reduction` low, medium or high) selects edge-aware
+on Bayer too, the demosaic that smooths. The choice depends only on the sensor type and the options, so it is the
+same on every machine.
+
+On X-Trans edge-aware is both the closest to ground truth and the cleanest on real files. On Bayer the two measures
+disagree: edge-aware has the smaller error against the (binned) ground-truth tiles, AHD the fewest false-colour
+artefacts on real files (speckle index 1.44 against 2.09 over 13 files; LibRaw's default AHD 1.57) and about a third of
+edge-aware's develop time. `Auto` was edge-aware on Bayer until the real-file measurements and a side-by-side review
+of crops made AHD the default there. Gating the choice on the frame's noise estimate was tried and dropped: the
+estimate rates a sharp ISO 64 foliage frame (Nikon Z8) as noisier than an ISO 3200 one, and AHD looked crisper on
+it. See [benchmarks](../benchmarks.md) and the table in [bayer-demosaics](bayer-demosaics.md). `Ppg` and `Rcd` fail with `Error::InvalidArgument` on a sensor that is not Bayer when an
 RGB output is requested; `Ahd` on another sensor, and edge-aware on other patterns, keep their documented fallbacks so
 that existing callers keep working.
 

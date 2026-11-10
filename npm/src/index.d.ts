@@ -522,9 +522,10 @@ export interface DecodeOptions {
   /**
    * Demosaic for RGB outputs. `half-size` = 2x2 binning (fast); `edge-aware` = directionally
    * weighted filters for Bayer and X-Trans sensors (much cleaner, several times slower); `ahd` =
-   * homogeneity-directed interpolation for Bayer sensors (CPU only: the WebGPU build falls back to the CPU
-   * for it); `ppg` = patterned pixel grouping and `rcd` = ratio-corrected (experimental), both Bayer sensors only and CPU only; `auto` = the best validated algorithm for the sensor (edge-aware on Bayer and X-Trans, bilinear
-   * otherwise; may change between minor versions), the default; `bilinear` = the fastest.
+   * homogeneity-directed interpolation for Bayer sensors (also on WebGPU); `ppg` = patterned pixel grouping and
+   * `rcd` = ratio-corrected (experimental), both Bayer sensors only and CPU only; `auto` = the best validated algorithm
+   * for the sensor (AHD on Bayer, edge-aware on X-Trans, bilinear otherwise; may change between minor versions), the
+   * default; `bilinear` = the fastest.
    */
   demosaic?: 'bilinear' | 'half-size' | 'edge-aware' | 'ahd' | 'ppg' | 'rcd' | 'auto';
   /**

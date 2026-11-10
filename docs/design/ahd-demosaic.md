@@ -1,7 +1,7 @@
 # Homogeneity-directed demosaic (`Demosaic::Ahd`)
 
-`Demosaic::Ahd` is the opt-in alternative to [`Demosaic::EdgeAware`](edge-aware-demosaic.md) for Bayer sensors
-that follows a published, widely used method: adaptive homogeneity-directed demosaicing (Hirakawa and Parks, 2005).
+`Demosaic::Ahd` is the demosaic that the default, `Demosaic::Auto`, picks on Bayer sensors (the alternative is
+[`Demosaic::EdgeAware`](edge-aware-demosaic.md), which `Auto` keeps for X-Trans). It follows a published, widely used method: adaptive homogeneity-directed demosaicing (Hirakawa and Parks, 2005).
 It is written from the paper's description; the module is `crates/flashraw/src/ahd.rs`.
 
 | | CLI | Python | JavaScript | C |
@@ -9,7 +9,15 @@ It is written from the paper's description; the module is `crates/flashraw/src/a
 | name | `--demosaic ahd` | `demosaic="ahd"` | `demosaic: 'ahd'` | `FLASHRAW_DEMOSAIC_AHD` |
 
 Sensors that are not Bayer (X-Trans, four-colour, Foveon, ...) use the edge-aware demosaic where it exists and bilinear
-otherwise. It runs on the CPU only: the GPU backend decodes on the CPU for it.
+otherwise.
+
+The GPU backend runs it too (`ahd_green`, `ahd_lab`, `ahd_hom`, `ahd_blend` in
+`crates/flashraw-gpu/shaders/edge.wgsl`, then the edge-aware encode kernel). The kernels follow the CPU's operations, but
+AHD decides with thresholds: where GPU rounding moves a lightness or chroma step across a threshold, a homogeneity count
+changes and the pixel's blend with it. On an Apple M1 Ultra (Metal) 0.35 % to 0.75 % of the 8-bit samples of the
+synthetic test frames differ from the CPU, by up to 25 codes (mean |diff| 2.6e-5 in linear float); on Mesa's llvmpipe
+none differ (`crates/flashraw-gpu/tests/ahd.rs`). A 24 MP Canon CR2 to RGBA8 on that machine: 130 ms with
+`--backend gpu` (kernel time 26 ms) against 168 ms on the CPU.
 
 ## Method
 
