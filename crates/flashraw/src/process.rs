@@ -1319,31 +1319,31 @@ macro_rules! with_encoder8 {
         match tables8($curve) {
             // The sRGB curve keeps its original fixed-size table and constant scale.
             _ if matches!($curve, OutputCurve::Srgb) => {
-                let $enc = rgba8_encoder();
+                let $enc = Pixel(rgba8_encoder());
                 $body
             }
             Tables::One(t) => {
                 let n = (t.len() - 1) as f32;
-                let $enc = move |p: [f32; 3]| {
+                let $enc = Pixel(move |p: [f32; 3]| {
                     [
                         t[(p[0].clamp(0.0, 1.0) * n) as usize],
                         t[(p[1].clamp(0.0, 1.0) * n) as usize],
                         t[(p[2].clamp(0.0, 1.0) * n) as usize],
                         255,
                     ]
-                };
+                });
                 $body
             }
             Tables::Each(t) => {
                 let n = (t[0].len() - 1) as f32;
-                let $enc = move |p: [f32; 3]| {
+                let $enc = Pixel(move |p: [f32; 3]| {
                     [
                         t[0][(p[0].clamp(0.0, 1.0) * n) as usize],
                         t[1][(p[1].clamp(0.0, 1.0) * n) as usize],
                         t[2][(p[2].clamp(0.0, 1.0) * n) as usize],
                         255,
                     ]
-                };
+                });
                 $body
             }
         }
@@ -1355,16 +1355,15 @@ macro_rules! with_encoder16 {
     ($curve:expr, |$enc:ident| $body:expr) => {
         match tables16($curve) {
             _ if matches!($curve, OutputCurve::Srgb) => {
-                let lut = srgb16_pairs();
-                let $enc = move |p: [f32; 3]| p.map(|v| srgb16_paired(v, lut));
+                let $enc = Srgb16;
                 $body
             }
             Tables::One(t) => {
-                let $enc = move |p: [f32; 3]| [srgb16(p[0], t), srgb16(p[1], t), srgb16(p[2], t)];
+                let $enc = Sample(move |v: f32| srgb16(v, t));
                 $body
             }
             Tables::Each(t) => {
-                let $enc = move |p: [f32; 3]| [srgb16(p[0], t[0]), srgb16(p[1], t[1]), srgb16(p[2], t[2])];
+                let $enc = Pixel(move |p: [f32; 3]| [srgb16(p[0], t[0]), srgb16(p[1], t[1]), srgb16(p[2], t[2])]);
                 $body
             }
         }
@@ -1477,15 +1476,15 @@ pub(crate) fn develop_staged(
             (dw, dh, ch, RawPixelData::U16(px))
         }
         RgbEncoding::Linear16 => {
-            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, |p: [f32; 3]| p.map(linear16))?;
+            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, Sample(linear16))?;
             (dw, dh, ch, RawPixelData::U16(px))
         }
         RgbEncoding::LinearF16 => {
-            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, |p: [f32; 3]| p.map(f32_to_f16))?;
+            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, Sample(f32_to_f16))?;
             (dw, dh, ch, RawPixelData::F16(px))
         }
         RgbEncoding::LinearF32 => {
-            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, |p: [f32; 3]| p)?;
+            let (dw, dh, px) = run_oriented(&k, w, h, o, parallel, band, Sample(|v: f32| v))?;
             (dw, dh, ch, RawPixelData::F32(px))
         }
     })
@@ -1503,6 +1502,116 @@ fn rgba8_encoder() -> impl Fn([f32; 3]) -> [u8; 4] + Sync {
     }
 }
 
+/// An output encoder: linear RGB pixels to `N` samples of `T` each.
+pub(crate) trait Encode<T: Copy, const N: usize>: Sync {
+    /// One pixel.
+    fn px(&self, p: [f32; 3]) -> [T; N];
+    /// `src` in order into `dst` (`src.len() * N` samples).
+    #[inline(always)]
+    fn run(&self, src: &[[f32; 3]], dst: &mut [T]) {
+        for (o, p) in dst.chunks_exact_mut(N).zip(src) {
+            o.copy_from_slice(&self.px(*p));
+        }
+    }
+}
+
+/// An encoder given per pixel.
+pub(crate) struct Pixel<F>(pub F);
+
+impl<T: Copy, const N: usize, F: Fn([f32; 3]) -> [T; N] + Sync> Encode<T, N> for Pixel<F> {
+    #[inline(always)]
+    fn px(&self, p: [f32; 3]) -> [T; N] {
+        (self.0)(p)
+    }
+}
+
+/// An encoder that treats every sample alike (three samples per pixel): runs are encoded as one
+/// flat loop, which vectorises (compiled a second time for AVX2 on x86-64; the same operations
+/// in the same order, so the result is the same).
+pub(crate) struct Sample<F>(pub F);
+
+impl<T: Copy, F: Fn(f32) -> T + Sync> Encode<T, 3> for Sample<F> {
+    #[inline(always)]
+    fn px(&self, p: [f32; 3]) -> [T; 3] {
+        p.map(&self.0)
+    }
+    #[inline(always)]
+    fn run(&self, src: &[[f32; 3]], dst: &mut [T]) {
+        let src = src.as_flattened();
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU supports AVX2 (checked above).
+            return unsafe { encode_samples_avx2(&self.0, src, dst) };
+        }
+        encode_samples(&self.0, src, dst)
+    }
+}
+
+#[inline(always)]
+fn encode_samples<T>(f: &impl Fn(f32) -> T, src: &[f32], dst: &mut [T]) {
+    for (o, &v) in dst.iter_mut().zip(src) {
+        *o = f(v);
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn encode_samples_avx2<T>(f: &impl Fn(f32) -> T, src: &[f32], dst: &mut [T]) {
+    encode_samples(f, src, dst)
+}
+
+/// The 16-bit sRGB encoder ([`srgb16_paired`]). Runs are encoded in blocks: the table indices
+/// and fractions first (a loop that vectorises), then the table reads, then the interpolation
+/// (vectorises again); one fused loop does not vectorise, and with AVX2 gathers it is slower
+/// than scalar code. The same operations as `srgb16_paired`, so the same result.
+pub(crate) struct Srgb16;
+
+impl Encode<u16, 3> for Srgb16 {
+    #[inline(always)]
+    fn px(&self, p: [f32; 3]) -> [u16; 3] {
+        let lut = srgb16_pairs();
+        p.map(|v| srgb16_paired(v, lut))
+    }
+    #[inline(always)]
+    fn run(&self, src: &[[f32; 3]], dst: &mut [u16]) {
+        let src = src.as_flattened();
+        #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // SAFETY: the CPU supports AVX2 (checked above).
+            return unsafe { srgb16_run_avx2(src, dst) };
+        }
+        srgb16_run(src, dst)
+    }
+}
+
+#[cfg(all(feature = "simd", target_arch = "x86_64"))]
+#[target_feature(enable = "avx2")]
+unsafe fn srgb16_run_avx2(src: &[f32], dst: &mut [u16]) {
+    srgb16_run(src, dst)
+}
+
+#[inline(always)]
+fn srgb16_run(src: &[f32], dst: &mut [u16]) {
+    const B: usize = 96;
+    let lut = srgb16_pairs();
+    let (mut idx, mut t, mut a, mut d) = ([0u32; B], [0f32; B], [0f32; B], [0f32; B]);
+    for (s, o) in src.chunks(B).zip(dst.chunks_mut(B)) {
+        let n = s.len();
+        for k in 0..n {
+            let x = s[k].clamp(0.0, 1.0) * SRGB16_SEGMENTS as f32;
+            let i = (x as u32).min(SRGB16_SEGMENTS as u32 - 1);
+            idx[k] = i;
+            t[k] = x - i as f32;
+        }
+        for k in 0..n {
+            [a[k], d[k]] = lut[idx[k] as usize];
+        }
+        for k in 0..n {
+            o[k] = (a[k] + d[k] * t[k] + 0.5) as u16;
+        }
+    }
+}
+
 /// Develop `w x h` output pixels with `k` and store them encoded by `enc` (`N` samples per
 /// pixel) under orientation `o`. Without `band`, rows are developed and stored one at a
 /// time; with it, each task develops its strip of rows, hands it to `band` (in developed
@@ -1514,7 +1623,7 @@ fn run_oriented<T, const N: usize>(
     o: Orientation,
     parallel: bool,
     band: Option<&BandHook<'_>>,
-    enc: impl Fn([f32; 3]) -> [T; N] + Sync,
+    enc: impl Encode<T, N>,
 ) -> Result<(u32, u32, Vec<T>)>
 where
     T: Copy + Default + Send + Sync,
@@ -1556,17 +1665,15 @@ where
                 let row = tile.row(i);
                 if rev_x {
                     for (px, p) in row.chunks_exact_mut(N).zip(rgb[..w].iter().rev()) {
-                        px.copy_from_slice(&enc(*p));
+                        px.copy_from_slice(&enc.px(*p));
                     }
                 } else {
-                    for (px, p) in row.chunks_exact_mut(N).zip(&rgb[..w]) {
-                        px.copy_from_slice(&enc(*p));
-                    }
+                    enc.run(&rgb[..w], &mut row[..w * N]);
                 }
             } else {
                 for oy in 0..th_ {
                     let sx = if rev_x { w - 1 - oy } else { oy };
-                    tile.row(oy)[i * N..i * N + N].copy_from_slice(&enc(rgb[sx]));
+                    tile.row(oy)[i * N..i * N + N].copy_from_slice(&enc.px(rgb[sx]));
                 }
             }
         };
@@ -1643,18 +1750,19 @@ pub fn srgb16(v: f32, lut: &[f32]) -> u16 {
 
 /// [`srgb16_lut`] as `(value, step to the next value)` pairs, so [`srgb16_paired`] reads one
 /// pair per sample. The steps are the same f32 differences [`srgb16`] computes.
-fn srgb16_pairs() -> &'static [[f32; 2]] {
+fn srgb16_pairs() -> &'static [[f32; 2]; SRGB16_SEGMENTS] {
     use std::sync::OnceLock;
-    static PAIRS: OnceLock<Vec<[f32; 2]>> = OnceLock::new();
+    static PAIRS: OnceLock<Box<[[f32; 2]; SRGB16_SEGMENTS]>> = OnceLock::new();
     PAIRS.get_or_init(|| {
         let lut = srgb16_lut();
-        (0..SRGB16_SEGMENTS).map(|i| [lut[i], lut[i + 1] - lut[i]]).collect()
+        let v: Vec<[f32; 2]> = (0..SRGB16_SEGMENTS).map(|i| [lut[i], lut[i + 1] - lut[i]]).collect();
+        v.into_boxed_slice().try_into().unwrap()
     })
 }
 
 /// [`srgb16`] from [`srgb16_pairs`]: the same result, one table read.
 #[inline(always)]
-fn srgb16_paired(v: f32, pairs: &[[f32; 2]]) -> u16 {
+fn srgb16_paired(v: f32, pairs: &[[f32; 2]; SRGB16_SEGMENTS]) -> u16 {
     let x = v.clamp(0.0, 1.0) * SRGB16_SEGMENTS as f32;
     let i = (x as usize).min(SRGB16_SEGMENTS - 1);
     let t = x - i as f32;
@@ -1706,14 +1814,14 @@ pub fn f16_to_f32(h: u16) -> f32 {
 
 /// Encode linear RGB to sRGB RGBA8 and apply EXIF orientation.
 pub fn to_rgba8(d: &Developed, orientation: Orientation, parallel: bool) -> (u32, u32, Vec<u8>) {
-    let (w, h, px) = encode_developed(d, rgba8_encoder(), orientation, parallel);
+    let (w, h, px) = encode_developed(d, Pixel(rgba8_encoder()), orientation, parallel);
     (w, h, px)
 }
 
 /// Encode a developed image with `enc` (`N` samples per pixel) under `orientation`.
 fn encode_developed<T, const N: usize>(
     d: &Developed,
-    enc: impl Fn([f32; 3]) -> [T; N] + Sync,
+    enc: impl Encode<T, N>,
     orientation: Orientation,
     parallel: bool,
 ) -> (u32, u32, Vec<T>)
@@ -1739,7 +1847,7 @@ where
                     Orientation::Rotate270 => (w - 1 - oy, ox),
                 };
                 let s = &d.rgb[(sy * w + sx) * 3..(sy * w + sx) * 3 + 3];
-                row[ox * N..ox * N + N].copy_from_slice(&enc([s[0], s[1], s[2]]));
+                row[ox * N..ox * N + N].copy_from_slice(&enc.px([s[0], s[1], s[2]]));
             }
         }
     });
@@ -1766,11 +1874,11 @@ pub(crate) fn encode_image(
             (w, h, ch, RawPixelData::U16(px))
         }
         RgbEncoding::Linear16 => {
-            let (w, h, px) = encode_developed(&d, |p: [f32; 3]| p.map(linear16), o, parallel);
+            let (w, h, px) = encode_developed(&d, Sample(linear16), o, parallel);
             (w, h, ch, RawPixelData::U16(px))
         }
         RgbEncoding::LinearF16 => {
-            let (w, h, px) = encode_developed(&d, |p: [f32; 3]| p.map(f32_to_f16), o, parallel);
+            let (w, h, px) = encode_developed(&d, Sample(f32_to_f16), o, parallel);
             (w, h, ch, RawPixelData::F16(px))
         }
         RgbEncoding::LinearF32 => (d.width, d.height, ch, RawPixelData::F32(d.rgb)),
@@ -1791,11 +1899,11 @@ pub(crate) fn encode_device(
         RgbEncoding::Rgba8 => {
             let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
             let (w, h, px) =
-                encode_developed(&d, |p: [f32; 3]| [q(p[0]), q(p[1]), q(p[2]), 255], orientation, parallel);
+                encode_developed(&d, Pixel(|p: [f32; 3]| [q(p[0]), q(p[1]), q(p[2]), 255]), orientation, parallel);
             (w, h, ch, RawPixelData::U8(px))
         }
         _ => {
-            let (w, h, px) = encode_developed(&d, |p: [f32; 3]| p.map(linear16), orientation, parallel);
+            let (w, h, px) = encode_developed(&d, Sample(linear16), orientation, parallel);
             (w, h, ch, RawPixelData::U16(px))
         }
     }
@@ -2244,7 +2352,7 @@ mod tests {
         enc: impl Fn([f32; 3]) -> [T; N] + Sync,
     ) -> (u32, u32, Vec<T>) {
         let d = develop(img, info, (3, 1), p, false).unwrap();
-        encode_developed(&d, enc, o, false)
+        encode_developed(&d, Pixel(enc), o, false)
     }
 
     #[test]
@@ -2300,6 +2408,30 @@ mod tests {
             let (_, _, _, px) = develop_encoded(&img, &info, (0, 0), &lp, RgbEncoding::Linear16, true).unwrap();
             let want: Vec<u16> = got.rgb.iter().map(|&v| linear16(v)).collect();
             assert_eq!(px.as_u16().unwrap(), &want[..]);
+        }
+    }
+
+    #[test]
+    fn encoder_runs_match_their_pixels() {
+        let mut v: Vec<f32> = (0..=70_000).map(|i| i as f32 / 65_536.0 - 0.03).collect();
+        v.extend([f32::NAN, f32::INFINITY, f32::NEG_INFINITY, -0.0, 1.0, 0.999_999_9, 1e-30]);
+        while v.len() % 3 != 0 {
+            v.push(0.5);
+        }
+        let px: Vec<[f32; 3]> = v.chunks_exact(3).map(|c| [c[0], c[1], c[2]]).collect();
+        fn check<T: Copy + Default + PartialEq + std::fmt::Debug>(enc: &impl Encode<T, 3>, px: &[[f32; 3]]) {
+            let mut run = vec![T::default(); px.len() * 3];
+            enc.run(px, &mut run);
+            let one: Vec<T> = px.iter().flat_map(|p| enc.px(*p)).collect();
+            assert_eq!(run, one);
+        }
+        check(&Srgb16, &px);
+        check(&Sample(linear16), &px);
+        check(&Sample(f32_to_f16), &px);
+        let lut = srgb16_lut();
+        check(&Sample(|v: f32| srgb16(v, lut)), &px);
+        for (p, e) in px.iter().zip(px.iter().map(|p| Srgb16.px(*p))) {
+            assert_eq!(e, p.map(|v| srgb16(v, lut)), "{p:?}");
         }
     }
 
