@@ -13,6 +13,8 @@
 //   planes 0-1  D1  colour differences R-G, B-G, pass 1                (edge_bayer_d1 / edge_xtrans_d1; reuses M, G0)
 //   planes 5-7  V2  cleaned RGB, pass 2                                (edge_bayer_v2, both sensors)
 //
+// The AHD demosaic (section below) uses the same layout with more planes and the same final
+// kernel.
 // then `develop_edge` smooths (noisy frames), applies the matrix and encodes. Pixels closer than
 // `halo` to the frame border are bilinear, like the CPU. The order of the floating-point
 // operations follows the CPU code; only FMA contraction and division rounding differ.
@@ -372,6 +374,170 @@ fn edge_xtrans_d1(@builtin(global_invocation_id) gid: vec3<u32>) {
     let g = sp(3u, idx);
     S[idx] = select(median9(rg), sp(2u, idx) - g, own == 0u);
     S[E.n + idx] = select(median9(bg), sp(4u, idx) - g, own == 2u);
+}
+
+// ---- AHD (CPU reference: `flashraw::ahd`, `Demosaic::Ahd`) on Bayer mosaics ---------------
+//
+// After `edge_mosaic` (plane 0, M), with `halo` = 6:
+//
+//   planes 1-2   GH, GV  green along rows / along columns                 (ahd_green)
+//   planes 3-5   L a b of candidate H, planes 6-8 of candidate V          (ahd_lab)
+//   planes 9-10  homogeneity counts of H and V                             (ahd_hom)
+//   planes 5-7   the blended RGB, read by `develop_edge` (smoothing off)   (ahd_blend)
+//
+// The same operations in the same order as the CPU code; samples outside the scratch rectangle
+// read as 0 and only affect pixels that are never output.
+
+fn ahd_at(k: u32, i: i32, j: i32) -> f32 {
+    if (e_inside(i, j)) {
+        return S[k * E.n + e_idx(i, j)];
+    }
+    return 0.0;
+}
+
+@compute @workgroup_size(16, 16)
+fn ahd_green(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= E.ew || gid.y >= E.eh) {
+        return;
+    }
+    let i = i32(gid.y);
+    let j = i32(gid.x);
+    let idx = e_idx(i, j);
+    let c = S[idx];
+    var gh = c;
+    var gv = c;
+    if (e_colour(i, j) != 1u) {
+        let l = ahd_at(0u, i, j - 1);
+        let r = ahd_at(0u, i, j + 1);
+        let u = ahd_at(0u, i - 1, j);
+        let d = ahd_at(0u, i + 1, j);
+        gh = min(max((l + r) * 0.5 + (2.0 * c - ahd_at(0u, i, j - 2) - ahd_at(0u, i, j + 2)) * 0.25, min(l, r)), max(l, r));
+        gv = min(max((u + d) * 0.5 + (2.0 * c - ahd_at(0u, i - 2, j) - ahd_at(0u, i + 2, j)) * 0.25, min(u, d)), max(u, d));
+    }
+    S[E.n + idx] = gh;
+    S[2u * E.n + idx] = gv;
+}
+
+// Colour difference (mosaic minus the green plane `gp`) at (i, j).
+fn ahd_df(gp: u32, i: i32, j: i32) -> f32 {
+    return ahd_at(0u, i, j) - ahd_at(gp, i, j);
+}
+
+// Candidate RGB at (i, j) from the green plane `gp` (1: H, 2: V): measured colours kept, the
+// others from the colour differences of the 3x3 window.
+fn ahd_rgb(i: i32, j: i32, gp: u32) -> vec3<f32> {
+    let c = ahd_at(0u, i, j);
+    let g = ahd_at(gp, i, j);
+    let col = e_colour(i, j);
+    let diag = g + 0.25 * (((ahd_df(gp, i - 1, j - 1) + ahd_df(gp, i - 1, j + 1)) + ahd_df(gp, i + 1, j - 1)) + ahd_df(gp, i + 1, j + 1));
+    let row = g + 0.5 * (ahd_df(gp, i, j - 1) + ahd_df(gp, i, j + 1));
+    let clm = g + 0.5 * (ahd_df(gp, i - 1, j) + ahd_df(gp, i + 1, j));
+    // A green site with red neighbours along its row.
+    let hr = col == 1u && e_colour(i, j + 1) == 0u;
+    var red = diag;
+    var blue = diag;
+    if (col == 0u) {
+        red = c;
+    } else if (col == 1u) {
+        red = select(clm, row, hr);
+    }
+    if (col == 2u) {
+        blue = c;
+    } else if (col == 1u) {
+        blue = select(row, clm, hr);
+    }
+    return vec3<f32>(red, g, blue);
+}
+
+@compute @workgroup_size(16, 16)
+fn ahd_lab(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= E.ew || gid.y >= E.eh) {
+        return;
+    }
+    let i = i32(gid.y);
+    let j = i32(gid.x);
+    let idx = e_idx(i, j);
+    for (var d = 0u; d < 2u; d++) {
+        let v = ahd_rgb(i, j, 1u + d);
+        let sr = sqrt(max(v.x, 0.0));
+        let sg = sqrt(max(v.y, 0.0));
+        let sb = sqrt(max(v.z, 0.0));
+        S[(3u + 3u * d) * E.n + idx] = ((sr + 2.0 * sg) + sb) * 0.25;
+        S[(4u + 3u * d) * E.n + idx] = sr - sg;
+        S[(5u + 3u * d) * E.n + idx] = sb - sg;
+    }
+}
+
+// Lightness step and squared chroma distance from (i, j) to (i + di, j + dj) in candidate `d`.
+fn ahd_step(d: u32, i: i32, j: i32, di: i32, dj: i32) -> vec2<f32> {
+    let b = 3u + 3u * d;
+    let l = ahd_at(b, i, j);
+    let a = ahd_at(b + 1u, i, j);
+    let c = ahd_at(b + 2u, i, j);
+    let ql = ahd_at(b, i + di, j + dj);
+    let qa = ahd_at(b + 1u, i + di, j + dj);
+    let qc = ahd_at(b + 2u, i + di, j + dj);
+    return vec2<f32>(abs(ql - l), (qa - a) * (qa - a) + (qc - c) * (qc - c));
+}
+
+@compute @workgroup_size(16, 16)
+fn ahd_hom(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= E.ew || gid.y >= E.eh) {
+        return;
+    }
+    let i = i32(gid.y);
+    let j = i32(gid.x);
+    let idx = e_idx(i, j);
+    // Thresholds: the smaller of the largest steps along the row in H and along the column in V.
+    let h0 = ahd_step(0u, i, j, 0, -1);
+    let h1 = ahd_step(0u, i, j, 0, 1);
+    let v0 = ahd_step(1u, i, j, -1, 0);
+    let v1 = ahd_step(1u, i, j, 1, 0);
+    let el = min(max(h0.x, h1.x), max(v0.x, v1.x));
+    let ec = min(max(h0.y, h1.y), max(v0.y, v1.y));
+    for (var d = 0u; d < 2u; d++) {
+        var cnt = 0.0;
+        for (var di = -1; di <= 1; di++) {
+            for (var dj = -1; dj <= 1; dj++) {
+                if (di == 0 && dj == 0) {
+                    continue;
+                }
+                let s = ahd_step(d, i, j, di, dj);
+                if (s.x <= el && s.y <= ec) {
+                    cnt += 1.0;
+                }
+            }
+        }
+        S[(9u + d) * E.n + idx] = cnt;
+    }
+}
+
+@compute @workgroup_size(16, 16)
+fn ahd_blend(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x >= E.ew || gid.y >= E.eh) {
+        return;
+    }
+    let i = i32(gid.y);
+    let j = i32(gid.x);
+    let idx = e_idx(i, j);
+    // Homogeneity summed over the 3x3 window (small integers: exact in any order).
+    var sh = 0.0;
+    var sv = 0.0;
+    for (var di = -1; di <= 1; di++) {
+        for (var dj = -1; dj <= 1; dj++) {
+            sh += ahd_at(9u, i + di, j + dj);
+            sv += ahd_at(10u, i + di, j + dj);
+        }
+    }
+    var w = 0.5;
+    if (sh + sv > 0.0) {
+        w = sh / (sh + sv);
+    }
+    let a = ahd_rgb(i, j, 1u);
+    let b = ahd_rgb(i, j, 2u);
+    S[5u * E.n + idx] = w * a.x + (1.0 - w) * b.x;
+    S[6u * E.n + idx] = w * a.y + (1.0 - w) * b.y;
+    S[7u * E.n + idx] = w * a.z + (1.0 - w) * b.z;
 }
 
 // ---- 6. Smoothing, border pixels, colour conversion, encoding ------------------------------

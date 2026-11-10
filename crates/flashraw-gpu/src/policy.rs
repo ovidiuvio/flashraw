@@ -101,6 +101,8 @@ pub struct Workload {
     pub bands: u32,
     /// The edge-aware demosaic instead of the bilinear one (RGB outputs).
     pub edge_aware: bool,
+    /// The AHD demosaic instead of the bilinear one (RGB outputs).
+    pub ahd: bool,
 }
 
 impl Workload {
@@ -131,6 +133,10 @@ pub struct Decision {
 /// CPU/GPU ratio matters.
 pub const EDGE_CPU_FACTOR: f64 = 5.0;
 pub const EDGE_GPU_FACTOR: f64 = 6.0;
+/// The same for the AHD demosaic: on the CPU 2.3x (x86-64, 45 MP Bayer, develop to RGBA8 on one
+/// thread), on the GPU 5.2x (Apple M1 Ultra, 24 MP Bayer, kernel time 26 ms against 5 ms).
+pub const AHD_CPU_FACTOR: f64 = 2.3;
+pub const AHD_GPU_FACTOR: f64 = 5.0;
 
 /// Frames below this size stay on the CPU (fixed GPU overheads dominate).
 pub const MIN_GPU_SAMPLES: u64 = 2_000_000;
@@ -158,11 +164,10 @@ pub fn decide(class: AdapterClass, gpu: &GpuCalibration, cpu: &CpuCosts, w: &Wor
             let unpack = if w.packed { w.samples as f64 / cpu.unpack_px_per_ms } else { 0.0 };
             let (c, g) = if half_size {
                 (w.samples as f64 / cpu.develop_half_px_per_ms, w.samples as f64 / gpu.develop_half_px_per_ms)
-            } else if w.edge_aware {
-                (
-                    out_px as f64 / cpu.develop_px_per_ms * EDGE_CPU_FACTOR,
-                    w.samples as f64 / gpu.develop_px_per_ms * EDGE_GPU_FACTOR,
-                )
+            } else if w.edge_aware || w.ahd {
+                let (fc, fg) =
+                    if w.ahd { (AHD_CPU_FACTOR, AHD_GPU_FACTOR) } else { (EDGE_CPU_FACTOR, EDGE_GPU_FACTOR) };
+                (out_px as f64 / cpu.develop_px_per_ms * fc, w.samples as f64 / gpu.develop_px_per_ms * fg)
             } else {
                 (out_px as f64 / cpu.develop_px_per_ms, w.samples as f64 / gpu.develop_px_per_ms)
             };
@@ -357,6 +362,7 @@ mod tests {
             resident: false,
             bands: 1,
             edge_aware: false,
+            ahd: false,
         }
     }
 

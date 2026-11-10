@@ -94,7 +94,9 @@ fn workload(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Option<Workload> {
         output,
         resident: opts.output.is_gpu_resident(),
         bands: 1,
-        edge_aware: opts.demosaic == crate::Demosaic::EdgeAware,
+        edge_aware: opts.demosaic == crate::Demosaic::EdgeAware
+            || (opts.demosaic == crate::Demosaic::Ahd && !info.cfa.is_some_and(|c| c.is_bayer())),
+        ahd: opts.demosaic == crate::Demosaic::Ahd && info.cfa.is_some_and(|c| c.is_bayer()),
     })
 }
 
@@ -118,14 +120,24 @@ pub fn edge_spec(
     Some(plan.gpu_spec())
 }
 
+/// The AHD demosaic of a Bayer frame for the GPU kernels (CFA phase at `origin`), `None` for
+/// frames the CPU AHD does not develop itself (several components per pixel, patterns that are
+/// not Bayer).
+pub fn ahd_spec(info: &FrameInfo, origin: (u32, u32)) -> Option<flashraw_gpu::EdgeSpec> {
+    if info.cpp != 1 || !info.cfa.as_ref()?.is_bayer() {
+        return None;
+    }
+    process::edge_plan(info.cfa.as_ref()?, origin)?.gpu_ahd_spec()
+}
+
 /// Decide whether this decode runs on the GPU. `Ok(None)` = CPU path.
 fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuContext>, Option<String>)>> {
     let resident = opts.output.is_gpu_resident();
     let base = opts.output.host_equivalent();
-    // The AHD demosaic, the highlight modes, the white balance modes, the noise levels, the chromatic aberration correction and
-    // camera profiles run on the CPU only.
+    // The PPG and RCD demosaics, the highlight modes, the white balance modes, the noise levels, the chromatic aberration
+    // correction and camera profiles run on the CPU only.
     if (opts.highlights != crate::Highlights::Clip
-        || matches!(opts.demosaic, crate::Demosaic::Ahd | crate::Demosaic::Ppg | crate::Demosaic::Rcd)
+        || matches!(opts.demosaic, crate::Demosaic::Ppg | crate::Demosaic::Rcd)
         || opts.white_balance != crate::WhiteBalanceMode::AsShot
         || opts.white_balance_multipliers.is_some()
         || opts.noise_reduction != crate::NoiseReduction::Auto
@@ -135,7 +147,7 @@ fn select(raw: &FlashRaw<'_>, opts: &DecodeOptions) -> Result<Option<(Arc<GpuCon
     {
         if resident {
             return Err(Error::NotAvailable(
-                "GPU-resident RGB output with the AHD, PPG or RCD demosaic, highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
+                "GPU-resident RGB output with the PPG or RCD demosaic, highlight modes, white balance modes, a noise level, chromatic aberration correction or a camera profile".into(),
             ));
         }
         return Ok(None);
@@ -355,7 +367,12 @@ async fn run(
                 opts.demosaic,
                 crop,
             ));
-            let edge = if opts.demosaic == crate::Demosaic::EdgeAware {
+            // AHD on a Bayer mosaic: its own kernels; on other patterns the CPU AHD develops with the
+            // edge-aware demosaic, and so does the GPU.
+            let ahd = (opts.demosaic == crate::Demosaic::Ahd).then(|| ahd_spec(&post_info, origin)).flatten();
+            let edge = if ahd.is_some() {
+                ahd
+            } else if matches!(opts.demosaic, crate::Demosaic::EdgeAware | crate::Demosaic::Ahd) {
                 let size = (fw as usize, fh as usize);
                 match (&packed, &img) {
                     (Some(p), _) => {

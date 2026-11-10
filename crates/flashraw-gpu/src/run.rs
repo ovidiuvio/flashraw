@@ -152,12 +152,23 @@ pub struct EdgeSpec {
     pub g0: &'static [f32],
     /// `[period*period][3][4][49]`: the 7x7 filters per position, colour and direction.
     pub dir: &'static [f32],
+    /// The AHD demosaic (`Demosaic::Ahd`, Bayer only) instead of the filters: it uses the
+    /// pattern (`canon`, `cx`, `cy`) and `halo`; `beta` must be 0.
+    pub ahd: bool,
 }
 
 /// Bytes of scratch planes (8 floats per pixel) an edge-aware band may use at most.
 const EDGE_SCRATCH_MAX: u64 = 512 << 20;
 /// Planes of the edge-aware scratch buffer (see `shaders/edge.wgsl`).
 const EDGE_PLANES: u64 = 8;
+/// Planes of the AHD scratch buffer (see `shaders/edge.wgsl`).
+const AHD_PLANES: u64 = 11;
+
+impl EdgeSpec {
+    fn planes(&self) -> u64 {
+        if self.ahd { AHD_PLANES } else { EDGE_PLANES }
+    }
+}
 
 /// Everything the edge-aware passes of one run need besides the common bindings.
 struct EdgeRun {
@@ -557,10 +568,11 @@ impl GpuContext {
                         || e.canon.len() != table
                         || e.g0.len() != table * 49
                         || e.dir.len() != table * 3 * 4 * 49
+                        || (e.ahd && (e.period != 2 || e.beta != 0.0))
                     {
                         return Err(Error::InvalidArgument("inconsistent edge-aware filter tables".into()));
                     }
-                    let row_bytes = (dw as u64 + 2 * e.halo as u64) * EDGE_PLANES * 4;
+                    let row_bytes = (dw as u64 + 2 * e.halo as u64) * e.planes() * 4;
                     let avail = EDGE_SCRATCH_MAX.min(self.max_binding_bytes());
                     let rows = (avail / row_bytes).saturating_sub(2 * e.halo as u64);
                     if rows == 0 {
@@ -813,7 +825,7 @@ impl GpuContext {
                             _ => [1.0; 4],
                         },
                     });
-                    info_b.push((n, (ew.div_ceil(16), eh.div_ceil(16)), round4(n as u64 * EDGE_PLANES * 4).max(16)));
+                    info_b.push((n, (ew.div_ceil(16), eh.div_ceil(16)), round4(n as u64 * e.planes() * 4).max(16)));
                 }
                 let stride = (std::mem::size_of::<kernels::EdgeParams>() as u64)
                     .div_ceil(limits.min_uniform_buffer_offset_alignment as u64)
@@ -836,9 +848,14 @@ impl GpuContext {
                 });
                 let scratch_bytes = info_b.iter().map(|b| b.2).max().unwrap_or(16);
                 let mk = |kernel| self.pipeline(PipelineKey { kernel, ..key });
-                let mut passes = vec![mk(Kernel::EdgeMosaic), mk(Kernel::EdgeG0), mk(Kernel::EdgeRgb)];
-                passes.push(mk(if e.period == 2 { Kernel::EdgeBayerD1 } else { Kernel::EdgeXtransD1 }));
-                passes.push(mk(Kernel::EdgeBayerV2));
+                let passes = if e.ahd {
+                    [Kernel::EdgeMosaic, Kernel::AhdGreen, Kernel::AhdLab, Kernel::AhdHom, Kernel::AhdBlend]
+                        .map(mk)
+                        .to_vec()
+                } else {
+                    let d1 = if e.period == 2 { Kernel::EdgeBayerD1 } else { Kernel::EdgeXtransD1 };
+                    [Kernel::EdgeMosaic, Kernel::EdgeG0, Kernel::EdgeRgb, d1, Kernel::EdgeBayerV2].map(mk).to_vec()
+                };
                 Some(EdgeRun {
                     params: buffer_init(dev, "flashraw.edge_params", &bytes, wgpu::BufferUsages::UNIFORM),
                     stride,

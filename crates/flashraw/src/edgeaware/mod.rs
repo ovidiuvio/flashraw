@@ -342,7 +342,20 @@ impl Plan {
             canon: &t.canon,
             g0: &t.g0,
             dir: &t.dir,
+            ahd: false,
         }
+    }
+
+    /// The AHD demosaic of the same frame for the GPU kernels: the pattern of this plan (a
+    /// Bayer one), no smoothing and the border of [`crate::ahd::HALO`] pixels.
+    #[cfg(feature = "gpu")]
+    pub(crate) fn gpu_ahd_spec(&self) -> Option<flashraw_gpu::EdgeSpec> {
+        (self.t.period == 2).then(|| flashraw_gpu::EdgeSpec {
+            beta: 0.0,
+            halo: crate::ahd::HALO as u32,
+            ahd: true,
+            ..self.gpu_spec()
+        })
     }
 
     /// Estimate the noise of a frame of `w` x `h` samples and set the weight of the

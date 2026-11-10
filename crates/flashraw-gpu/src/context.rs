@@ -67,6 +67,11 @@ pub(crate) enum Kernel {
     EdgeBayerD1,
     EdgeBayerV2,
     EdgeXtransD1,
+    /// AHD demosaic passes (same bind group, after `EdgeMosaic`, before `EdgeDevelop`).
+    AhdGreen,
+    AhdLab,
+    AhdHom,
+    AhdBlend,
     EdgeDevelop,
 }
 
@@ -80,6 +85,10 @@ impl Kernel {
                 | Kernel::EdgeBayerD1
                 | Kernel::EdgeBayerV2
                 | Kernel::EdgeXtransD1
+                | Kernel::AhdGreen
+                | Kernel::AhdLab
+                | Kernel::AhdHom
+                | Kernel::AhdBlend
                 | Kernel::EdgeDevelop
         )
     }
@@ -433,6 +442,10 @@ impl GpuContext {
             Kernel::EdgeBayerD1 => "edge_bayer_d1",
             Kernel::EdgeBayerV2 => "edge_bayer_v2",
             Kernel::EdgeXtransD1 => "edge_xtrans_d1",
+            Kernel::AhdGreen => "ahd_green",
+            Kernel::AhdLab => "ahd_lab",
+            Kernel::AhdHom => "ahd_hom",
+            Kernel::AhdBlend => "ahd_blend",
             Kernel::EdgeDevelop => "develop_edge",
         };
         let mut constants: Vec<(&str, f64)> = vec![
