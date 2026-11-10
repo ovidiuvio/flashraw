@@ -53,7 +53,8 @@ one process per file; input read into memory before timing):
           rawpy     rawpy.imread(BytesIO) + raw_image (LibRaw unpack)
           dcraw     whole process `dcraw -c -D -4 FILE > /dev/null`
   rgb     FlashRaw  open + decode + bilinear demosaic + as-shot WB + colour matrix +
-                    sRGB 8-bit + orientation (`--output rgba8 --backend simd`)
+                    sRGB 8-bit + orientation (`--output rgba8 --demosaic bilinear --backend simd`;
+                    bilinear is pinned: the default `auto` is edge-aware on Bayer and X-Trans)
           LibRaw    open_buffer() + unpack() + dcraw_process() (user_qual=0 bilinear,
                     use_camera_wb=1, output_bps=8, default sRGB output) + dcraw_make_mem_image()
           lcms      LibRaw to 16-bit linear ProPhoto (dcraw_process, bilinear, camera WB,
@@ -822,9 +823,9 @@ def cmd_run(a):
         load = os.getloadavg()[0]
         if lib == "flashraw":
             cmd = [a.flashraw, "benchmark", "--json", "--iterations", it]
-            cmd += {"decode": ["--output", "raw-u16"], "rgb": ["--output", "rgba8"],
+            cmd += {"decode": ["--output", "raw-u16"], "rgb": ["--output", "rgba8", "--demosaic", "bilinear"],
                     "rgb-half": ["--output", "rgba8", "--demosaic", "half"],
-                    "rgb-gpu": ["--output", "rgba8", "--backend", "gpu"]}[mode]
+                    "rgb-gpu": ["--output", "rgba8", "--demosaic", "bilinear", "--backend", "gpu"]}[mode]
             if mode != "rgb-gpu":
                 cmd += ["--backend", "simd"]  # CPU only (a GPU build's `auto` may pick the GPU)
             # Single thread: RAYON_NUM_THREADS=1 (set in env_one); like `--threads 1`, the

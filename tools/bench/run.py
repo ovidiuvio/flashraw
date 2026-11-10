@@ -52,6 +52,8 @@ for f in files:
     for mode in a.mode:
         cmd = [a.flashraw, "benchmark", "--json", "--iterations", str(a.iterations),
                "--output", "rgba8" if mode == "rgb" else "raw-u16"]
+        if mode == "rgb":
+            cmd += ["--demosaic", "bilinear"]  # the official RGB numbers stay on bilinear
         if a.threads:
             cmd += ["--threads", str(a.threads)]
         p = subprocess.run(cmd + [f], capture_output=True, text=True)
