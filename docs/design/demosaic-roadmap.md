@@ -110,3 +110,7 @@ real-world files) the two supports were also level on Bayer.
   differences is +0.17 dB clean and +0.74 dB at high noise on the tiles but raises the real-file speckle from 2.09 to
   2.96. The 2x2-binned tiles are softer than real files at the Nyquist frequency, where false colour appears, which
   is one more reason for the full-resolution training data above.
+* Tried as full-resolution ground truth: the CC0 Sigma Merrill files of the corpus (Foveon, all three colours
+  measured at every pixel, 7 files, 18 bright tiles). Their colour noise at ISO 100 dominates the score: plain
+  bilinear has the highest PSNR (32.88 dB against 31.48 for edge-aware, 30.50 for AHD), because averaging the noisy
+  reference wins. Not usable as training or test data without denoising it first, which would bias the result.
