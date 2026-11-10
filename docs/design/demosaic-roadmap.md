@@ -98,11 +98,16 @@ real-world files) the two supports were also level on Bayer.
 
 * Training data: full-resolution linear targets with simulated blur, clipping and read noise; split by source image
   and camera. The 2x2-binned renders are slightly soft. Not started.
-* The shared output stage: the 16-bit sRGB encode is about a third of a bilinear develop to `rgb16` (a gather and an
-  interpolation per sample); `finish_rgb` works on interleaved triples and does not vectorise.
-* Edge-aware on aarch64 is relatively slower than on x86-64 with AVX2 (6.6 times bilinear on an Apple M1, 4.0 times on
-  a Ryzen 7 9700X, one thread): the kernels are written for 16-lane accumulators and NEON has 4 lanes, with no wider
-  second compile.
+* The shared output stage: the 16-bit sRGB encode now runs in blocks (index, table read, interpolation; 256 to 231 ms
+  for a 24 MP bilinear develop to `rgb16`, one thread, output unchanged) and the linear encoders in flat per-sample
+  loops (`linear-rgb16` 185 to 170, `linear-rgb-f16` 188 to 149). An AVX2 gather of the table was slower than scalar
+  reads on the Ryzen. `finish_rgb` still works on interleaved triples: moving it into a separate pass over each row
+  was 35 % slower than leaving it fused with the bilinear interpolation, so a faster version needs planar rows.
+* Edge-aware on aarch64: the two chroma passes kept twelve row-wide sum arrays in memory, which cost twice the share
+  of the develop on an Apple M1 that it does on x86-64; they now keep 32-column blocks in registers (output
+  unchanged), and the filter taps use fused multiply-adds on aarch64. One thread, 18 MP Bayer on the M1: 1313 to
+  899 ms in the speed table (5.4 times bilinear, 4.4 on the Ryzen 7 9700X). The rest of the gap is the 4-lane NEON
+  baseline against an AVX2 compile.
 * A per-pattern halo (7 for X-Trans with 5x5 filters) would save a little more on X-Trans.
 * New X-Trans algorithms beyond edge-aware: the homogeneity choice and the second pass of the direction weights did
   not help; the two-pass chroma stage did (above). Better training data is the next candidate.

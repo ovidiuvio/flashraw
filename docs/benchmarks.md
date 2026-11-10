@@ -915,21 +915,22 @@ count), in ms, best of the runs of two idle-machine passes (data in `benches/res
 
 | | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | FlashRaw PPG | FlashRaw RCD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Bayer, 1 thread | 149 | 603 | 309 | 184 | 208 | 206 | 257 | 595 | 1092 | 1045 | 1659 | 2308 |
-| Bayer, 16 threads | 23 | 238 | 74 | 59 | 61 | 185 | 119 | 187 | 1081 | 1026 | 277 | 2290 |
+| Bayer, 1 thread | 125 | 546 | 295 | 163 | 189 | 205 | 258 | 599 | 1091 | 1044 | 1661 | 2307 |
+| Bayer, 16 threads | 19 | 237 | 71 | 58 | 59 | 184 | 118 | 208 | 1076 | 1024 | 278 | 2291 |
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
 |---|---:|---:|---:|---:|---:|---:|
-| X-Trans, 1 thread | 490 | 1407 | 486 | 2255 | 5508 | 10974 |
-| X-Trans, 16 threads | 74 | 523 | 412 | 2205 | 1081 | 1916 |
+| X-Trans, 1 thread | 434 | 1562 | 487 | 2253 | 5503 | 10950 |
+| X-Trans, 16 threads | 65 | 559 | 409 | 2175 | 1065 | 1907 |
 
 The 16 "threads" are 8 cores with two hardware threads each, so the 16-thread figures gain little over 8. For the same
-method FlashRaw is faster: PPG 1.4 times on one thread (184 against 257) and 2.0 times on 16, AHD 1.9 times and 2.5
-times, bilinear 1.4 and 8 times; on X-Trans bilinear is level on one thread (490 against 486). FlashRaw RCD (more
-accurate than LibRaw DCB, above) takes a fifth of DCB's time on one thread and a seventeenth on 16. Edge-aware, the most
-accurate method, costs about as much as LibRaw AHD on one thread (603 against 595) and is 1.3 times slower than it on
-16 (238 against 187), 2.0 times slower than LibRaw PPG on 16; on X-Trans it is 3.9 times faster than Markesteijn 1-pass
-on one thread and 2.1 times on 16.
+method FlashRaw is faster: PPG 1.6 times on one thread (163 against 258) and 2.0 times on 16, AHD 2.0 times and 2.9
+times, bilinear 1.6 and 9.7 times; on X-Trans bilinear is 1.1 times faster on one thread (434 against 487). FlashRaw RCD
+(more accurate than LibRaw DCB, above) takes a fifth of DCB's time on one thread and a seventeenth on 16. Edge-aware, the
+most accurate method, is slightly faster than LibRaw AHD on one thread (546 against 599) and 1.1 times slower than it on
+16 (237 against 208), 2.0 times slower than LibRaw PPG on 16; on X-Trans it is 3.5 times faster than Markesteijn 1-pass
+on one thread and 1.9 times on 16 (its two-pass colour stage costs more than the earlier median: 1562 against 1407 ms
+before).
 
 **Speed on Apple Silicon.** The same post-process stage on an Apple M1 Ultra (macOS, 20 cores), LibRaw 0.22 through rawpy
 0.27 from PyPI, in ms (data in `benches/results/demosaic/speed-mac.json`). The rawpy wheel for macOS is built without
@@ -938,19 +939,20 @@ a single-threaded LibRaw", and the 1-thread row as the like-for-like comparison.
 
 | | FlashRaw bilinear | FlashRaw edge-aware | FlashRaw AHD | FlashRaw PPG | FlashRaw RCD | LibRaw linear | LibRaw PPG | LibRaw AHD | LibRaw VNG | LibRaw DCB | LibRaw DHT | LibRaw AAHD |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| Bayer, 1 thread | 200 | 1313 | 569 | 240 | 264 | 269 | 239 | 579 | 1613 | 1510 | 2012 | 2471 |
-| Bayer, 20 threads | 15 | 94 | 44 | 20 | 22 | 262 | 238 | 577 | 1612 | 1505 | 2007 | 2469 |
+| Bayer, 1 thread | 165 | 899 | 526 | 209 | 234 | 274 | 233 | 570 | 1600 | 1497 | 1986 | 2443 |
+| Bayer, 20 threads | 14 | 68 | 42 | 18 | 21 | 268 | 234 | 559 | 1594 | 1499 | 1976 | 2439 |
 
 | | FlashRaw bilinear | FlashRaw edge-aware | LibRaw linear | LibRaw VNG | LibRaw Markesteijn 1-pass | LibRaw Markesteijn 3-pass |
 |---|---:|---:|---:|---:|---:|---:|
-| X-Trans, 1 thread | 640 | 1557 | 630 | 3448 | 7405 | 16337 |
-| X-Trans, 20 threads | 44 | 119 | 630 | 3445 | 7387 | 16360 |
+| X-Trans, 1 thread | 560 | 1351 | 627 | 3450 | 7419 | 16390 |
+| X-Trans, 20 threads | 38 | 127 | 634 | 3434 | 7402 | 16328 |
 
-On one thread FlashRaw and LibRaw are level for the same method (PPG 240 against 239, AHD 569 against 579, X-Trans
-bilinear 640 against 630); FlashRaw's bilinear is faster on Bayer (200 against 269). FlashRaw edge-aware is 4.8 times
-faster than Markesteijn 1-pass on X-Trans and slightly faster than LibRaw DCB on Bayer (1313 against 1510). Compared to
-x86-64 the edge-aware demosaic is relatively slower on this machine: its kernels are compiled a second time for AVX2 on
-x86-64, while aarch64 runs the 4-lane NEON baseline.
+On one thread FlashRaw is slightly faster for the same method (PPG 209 against 233, AHD 526 against 570, X-Trans
+bilinear 560 against 627) and 1.7 times faster with bilinear on Bayer (165 against 274). FlashRaw edge-aware is 5.5
+times faster than Markesteijn 1-pass on X-Trans and 1.7 times faster than LibRaw DCB on Bayer (899 against 1497). The
+edge-aware demosaic is still relatively slower on this machine than on x86-64 (5.4 times bilinear against 4.4 times,
+one thread): its filter kernels are compiled a second time for AVX2 on x86-64, while aarch64 runs the 4-lane NEON
+baseline (with fused multiply-adds).
 
 ## Performance regression detection
 

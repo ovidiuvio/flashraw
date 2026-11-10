@@ -18,6 +18,9 @@
   Bayer stage (CPU and GPU): on held-out tiles 42.00 / 39.37 dB clean (was 41.92 / 39.20) and better under noise, and
   the real-file colour speckle index falls from 2.18 to 1.84, the lowest of the X-Trans demosaics measured
   (`docs/benchmarks.md`). Output changes on X-Trans files.
+- Faster output encoding (`rgb16` 10 %, `linear-rgb16` 8 %, `linear-rgb-f16` 21 % on a bilinear develop, output
+  unchanged) and edge-aware chroma passes (7 % on x86-64, 11 % on an Apple M1, output unchanged). On aarch64 the
+  edge-aware filters use fused multiply-adds (another 9 %), so aarch64 results differ from x86-64 by rounding.
 - Faster: `Ppg` and `Rcd` vectorise (interior output unchanged; the 4-pixel border ring is now developed by them
   instead of bilinear), and the black-level normalisation, the 16-bit encode loop, the AHD green loop and the bilinear
   path of X-Trans and other patterns do less work per pixel (output unchanged).
