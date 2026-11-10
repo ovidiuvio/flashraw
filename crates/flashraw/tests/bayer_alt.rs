@@ -1,6 +1,6 @@
 //! `Demosaic::Ppg` and `Demosaic::Rcd` on synthetic DNG files: Bayer sensors develop (the same
 //! bytes for any thread count, different from bilinear), other sensors are rejected with
-//! `Error::InvalidArgument`, and `Demosaic::Auto` stands for the edge-aware demosaic.
+//! `Error::InvalidArgument`, and `Demosaic::Auto` stands for AHD on Bayer and edge-aware on X-Trans.
 
 use flashraw::{Backend, DecodeOptions, Demosaic, Error, FlashRaw, OutputFormat};
 
@@ -129,9 +129,9 @@ fn bayer_only_demosaics_reject_other_sensors_but_not_raw_outputs() {
 }
 
 #[test]
-fn auto_is_edge_aware_on_bayer_and_x_trans() {
-    for file in [bayer(), xtrans()] {
+fn auto_is_ahd_on_bayer_and_edge_aware_on_x_trans() {
+    for (file, same) in [(bayer(), Demosaic::Ahd), (xtrans(), Demosaic::EdgeAware)] {
         let raw = FlashRaw::open(file).unwrap();
-        assert_eq!(rgb(&raw, Demosaic::Auto, Some(1)).unwrap(), rgb(&raw, Demosaic::EdgeAware, Some(1)).unwrap());
+        assert_eq!(rgb(&raw, Demosaic::Auto, Some(1)).unwrap(), rgb(&raw, same, Some(1)).unwrap());
     }
 }

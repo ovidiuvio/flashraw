@@ -1,9 +1,9 @@
-//! `Demosaic::Auto` stands for the edge-aware demosaic on Bayer and X-Trans sensors and for
-//! bilinear elsewhere (a sensor without a colour filter array), whatever the output.
+//! `Demosaic::Auto` stands for AHD on Bayer sensors (edge-aware when a smoothing level is asked
+//! for), the edge-aware demosaic on X-Trans sensors and bilinear elsewhere (a sensor without a colour filter array), whatever the output.
 //!
 //! Runs when the CC0 corpus is present (`$FLASHRAW_CORPUS` or `<repo>/corpus`); skipped otherwise.
 
-use flashraw::{CfaColor, CfaPattern, DecodeOptions, Demosaic, FlashRaw, OutputFormat, Rect};
+use flashraw::{CfaColor, CfaPattern, DecodeOptions, Demosaic, FlashRaw, NoiseReduction, OutputFormat, Rect};
 use std::path::PathBuf;
 
 fn corpus() -> Option<PathBuf> {
@@ -24,7 +24,12 @@ fn auto_resolves_by_pattern() {
         &[g, b, g, g, r, g, r, g, r, b, g, b, g, b, g, g, r, g, g, r, g, g, b, g, b, g, b, r, g, r, g, r, g, g, b, g],
     )
     .unwrap();
-    assert_eq!(Demosaic::Auto.resolve(Some(&bayer)), Demosaic::EdgeAware);
+    assert_eq!(Demosaic::Auto.resolve(Some(&bayer)), Demosaic::Ahd);
+    assert_eq!(Demosaic::Auto.resolve_for(Some(&bayer), NoiseReduction::Auto), Demosaic::Ahd);
+    assert_eq!(Demosaic::Auto.resolve_for(Some(&bayer), NoiseReduction::Off), Demosaic::Ahd);
+    assert_eq!(Demosaic::Auto.resolve_for(Some(&bayer), NoiseReduction::Medium), Demosaic::EdgeAware);
+    assert_eq!(Demosaic::Auto.resolve_for(Some(&xtrans), NoiseReduction::Off), Demosaic::EdgeAware);
+    assert_eq!(Demosaic::Ahd.resolve_for(Some(&bayer), NoiseReduction::High), Demosaic::Ahd);
     assert_eq!(Demosaic::Auto.resolve(Some(&xtrans)), Demosaic::EdgeAware);
     assert_eq!(Demosaic::Auto.resolve(None), Demosaic::Bilinear);
     for d in [Demosaic::Bilinear, Demosaic::HalfSize, Demosaic::EdgeAware, Demosaic::Ahd] {
@@ -34,12 +39,14 @@ fn auto_resolves_by_pattern() {
 }
 
 #[test]
-fn auto_decodes_like_edge_aware_on_bayer_and_x_trans() {
+fn auto_decodes_like_ahd_on_bayer_and_edge_aware_on_x_trans() {
     let Some(corpus) = corpus() else {
         eprintln!("corpus not found; skipping (see tools/corpus/fetch.py)");
         return;
     };
-    for rel in ["Canon/EOS 40D/_MG_0153.CR2", "Fujifilm/X-T5/DSCF0021.RAF"] {
+    for (rel, same) in
+        [("Canon/EOS 40D/_MG_0153.CR2", Demosaic::Ahd), ("Fujifilm/X-T5/DSCF0021.RAF", Demosaic::EdgeAware)]
+    {
         let path = corpus.join(rel);
         if !path.exists() {
             eprintln!("missing {rel}");
@@ -58,7 +65,7 @@ fn auto_decodes_like_edge_aware_on_bayer_and_x_trans() {
                 .unwrap();
             f.as_u8().unwrap().to_vec()
         };
-        assert!(run(Demosaic::Auto) == run(Demosaic::EdgeAware), "{rel}: auto differs from edge-aware");
+        assert!(run(Demosaic::Auto) == run(same), "{rel}: auto differs from {same:?}");
         assert!(run(Demosaic::Auto) != run(Demosaic::Bilinear), "{rel}: auto equals bilinear");
     }
 }

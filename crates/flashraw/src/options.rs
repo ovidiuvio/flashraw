@@ -237,9 +237,12 @@ pub enum Demosaic {
     /// with soft diagonal weights. Bayer only. May change or be removed between minor versions.
     Rcd,
     /// The best validated algorithm for the sensor, chosen when the file is decoded and the same
-    /// for the same sensor type on every machine: [`Demosaic::EdgeAware`] on Bayer and X-Trans
-    /// sensors (the smallest error against ground truth on clean and noisy tiles in the
-    /// benchmarks), bilinear on every other pattern. The default. The algorithm behind it may
+    /// for the same sensor type on every machine: [`Demosaic::Ahd`] on Bayer sensors (the fewest
+    /// false-colour artefacts on real files in the benchmarks, and the fastest of the
+    /// interpolating ones after bilinear), [`Demosaic::EdgeAware`] on X-Trans sensors (closest
+    /// to ground truth and the fewest false-colour artefacts there) and on Bayer sensors when
+    /// [`DecodeOptions::noise_reduction`] asks for a smoothing level, bilinear on every other
+    /// pattern. The default. The algorithm behind it may
     /// change between minor versions as better ones are validated; pin an explicit algorithm
     /// (for example [`Demosaic::Bilinear`], the fastest) to keep the output stable.
     #[default]
@@ -532,10 +535,22 @@ impl Demosaic {
     /// The concrete algorithm [`Demosaic::Auto`] stands for on a sensor with this pattern
     /// (any other value is returned as is). `None` is a sensor without a colour filter array.
     pub fn resolve(self, cfa: Option<&flashraw_core::CfaPattern>) -> Demosaic {
-        match (self, cfa.map(|c| (c.width(), c.height()))) {
-            (Demosaic::Auto, Some((2, 2) | (6, 6))) => Demosaic::EdgeAware,
+        match (self, cfa) {
+            (Demosaic::Auto, Some(c)) if c.is_bayer() => Demosaic::Ahd,
+            (Demosaic::Auto, Some(c)) if (c.width(), c.height()) == (6, 6) => Demosaic::EdgeAware,
             (Demosaic::Auto, _) => Demosaic::Bilinear,
             (d, _) => d,
+        }
+    }
+
+    /// [`Demosaic::resolve`] for a decode with `noise` smoothing: an explicit smoothing level
+    /// (`Low`, `Medium`, `High`) selects the edge-aware demosaic, the one that smooths, for
+    /// [`Demosaic::Auto`] on Bayer sensors too.
+    pub fn resolve_for(self, cfa: Option<&flashraw_core::CfaPattern>, noise: NoiseReduction) -> Demosaic {
+        let smoothing = matches!(noise, NoiseReduction::Low | NoiseReduction::Medium | NoiseReduction::High);
+        match self.resolve(cfa) {
+            Demosaic::Ahd if self == Demosaic::Auto && smoothing => Demosaic::EdgeAware,
+            d => d,
         }
     }
 }

@@ -246,7 +246,8 @@ impl FlashRaw<'_> {
     /// waited on synchronously; also usable on native). Uses the GPU path (call
     /// `flashraw::gpu::init().await` first in the browser), except for host outputs that a
     /// DNG opcode list changes: those are decoded by the CPU pipeline, like [`FlashRaw::decode`].
-    pub async fn decode_gpu_async(&self, opts: DecodeOptions) -> Result<RawFrame> {
+    pub async fn decode_gpu_async(&self, mut opts: DecodeOptions) -> Result<RawFrame> {
+        opts.demosaic = opts.demosaic.resolve_for(self.frame_info().cfa.as_ref(), opts.noise_reduction);
         if !opts.output.is_gpu_resident()
             && (opts.output_profile.is_some()
                 || opts.apply_opcodes

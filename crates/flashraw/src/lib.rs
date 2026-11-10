@@ -288,7 +288,7 @@ impl<'a> FlashRaw<'a> {
     /// with [`DecodeOptions::preview_fallback`], RGB outputs then return the embedded
     /// full-size preview instead (see [`FrameSource::Preview`]).
     pub fn decode(&self, mut opts: DecodeOptions) -> Result<RawFrame> {
-        opts.demosaic = opts.demosaic.resolve(self.decoder.frame_info().cfa.as_ref());
+        opts.demosaic = opts.demosaic.resolve_for(self.decoder.frame_info().cfa.as_ref(), opts.noise_reduction);
         if opts.demosaic.requires_bayer() && opts.output.is_rgb() && !process::is_bayer(self.decoder.frame_info()) {
             return Err(Error::InvalidArgument(format!(
                 "the {} demosaic needs a Bayer sensor; this file's pattern is not one (use edge-aware, bilinear or auto)",
