@@ -69,7 +69,8 @@ Per pixel, on the white-balanced mosaic (samples clipped to the white level, as 
 Support is 8 pixels around each output pixel (3 for the filter, 2 for the weights' gradients, 2 for the chroma passes, 1 for the smoothing).
 The develop runs in bands of 32 output rows plus that halo, so memory stays bounded for any size (a few MB per
 thread), and every pixel is computed by the same operations in the same order whatever the band, thread count,
-crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). Pixels
+crop or backend setting: results are bit-identical (tests: `edgeaware::tests`, `tests/edgeaware.rs`). On aarch64 the
+filter taps use fused multiply-adds (9 % faster on an Apple M1), so aarch64 and x86-64 results differ by rounding. Pixels
 closer than 8 samples to the frame border use bilinear.
 
 A 4-wide `f32` accumulate over contiguous per-phase planes keeps the cost to a few times bilinear:

@@ -37,7 +37,8 @@
 //!
 //! Every output pixel depends only on mosaic samples within [`HALO`] pixels, and is computed
 //! by the same operations in the same order whatever the band, thread or block it falls in:
-//! results are bit-identical for any strip height, thread count or crop.
+//! results are bit-identical for any strip height, thread count or crop. On aarch64 the filter
+//! taps use fused multiply-adds, so results there differ from x86-64 by rounding.
 
 use flashraw_core::CfaPattern;
 use std::f32::consts::FRAC_1_SQRT_2;
@@ -105,7 +106,15 @@ fn apply_taps<const N: usize>(
             for f in 0..N {
                 let c = t.c[f];
                 for l in 0..LANES {
-                    acc[f][l] += c * v[l];
+                    // aarch64 always has a fused multiply-add (one instruction, one rounding).
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        acc[f][l] = c.mul_add(v[l], acc[f][l]);
+                    }
+                    #[cfg(not(target_arch = "aarch64"))]
+                    {
+                        acc[f][l] += c * v[l];
+                    }
                 }
             }
         }
