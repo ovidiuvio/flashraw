@@ -396,99 +396,116 @@ impl Plan {
                 }
             }
         }
+        // Both passes work on blocks of `CB` columns with their sums in registers, a block
+        // `run!` once with the constant `CB` (full blocks) and once with the remainder; every
+        // sum adds the same terms in the same order as a per-column loop would.
+        const CB: usize = 32;
+        macro_rules! blocks {
+            ($n:expr, |$j0:ident, $len:ident| $body:block) => {{
+                let n = $n;
+                let mut $j0 = 0;
+                while $j0 + CB <= n {
+                    let $len = CB;
+                    $body
+                    $j0 += CB;
+                }
+                if $j0 < n {
+                    let $len = n - $j0;
+                    $body
+                }
+            }};
+        }
         let mut inv = vec![0f32; e1c];
-        let mut wtv = vec![0f32; e1c];
-        // Per colour, the sums over its sites: weights, weighted differences, differences, count.
-        let mut acc: [[Vec<f32>; 4]; 2] = std::array::from_fn(|_| std::array::from_fn(|_| vec![0f32; e1c]));
         for i in (0..e1r).filter(|_| p == 2) {
             let gc = &g[(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
             for (v, &x) in inv.iter_mut().zip(gc) {
                 *v = 1.0 / (0.2 * x.max(0.0) + 0.015);
             }
-            for a in acc.iter_mut().flatten() {
-                a.fill(0.0);
-            }
-            for dy in 0..3 {
-                let rk = (i + dy + py) % p;
-                for dx in 0..3 {
-                    let k0 = (i + dy) * ec + dx;
-                    let gk = &g[k0..k0 + e1c];
-                    // The gate weight does not depend on the colour: once for both.
-                    for j in 0..e1c {
-                        let e = (gk[j] - gc[j]) * inv[j];
-                        wtv[j] = 1.0 / (1.0 + e * e);
-                    }
-                    for (cc, a) in acc.iter_mut().enumerate() {
-                        let ms = &masks[cc][rk][dx..dx + e1c];
-                        let pk = &planes[cc][k0..k0 + e1c];
-                        let [sw, sd, su, n] = a;
-                        for j in 0..e1c {
-                            let d = pk[j] - gk[j];
-                            let wt = wtv[j];
-                            let m = ms[j];
-                            sw[j] += m * wt;
-                            sd[j] += (m * wt) * d;
-                            su[j] += m * d;
-                            n[j] += m;
+            let rk1 = (i + 1 + py) % p;
+            blocks!(e1c, |j0, len| {
+                // Per colour, the sums over its sites: weights, weighted differences,
+                // differences, count.
+                let mut a = [[[0f32; CB]; 4]; 2];
+                for dy in 0..3 {
+                    let rk = (i + dy + py) % p;
+                    for dx in 0..3 {
+                        let k0 = (i + dy) * ec + dx + j0;
+                        let (gk, gb, ib) = (&g[k0..k0 + len], &gc[j0..j0 + len], &inv[j0..j0 + len]);
+                        let ms = [&masks[0][rk][dx + j0..dx + j0 + len], &masks[1][rk][dx + j0..dx + j0 + len]];
+                        let pk = [&planes[0][k0..k0 + len], &planes[1][k0..k0 + len]];
+                        let [[sw0, sd0, su0, n0], [sw1, sd1, su1, n1]] = &mut a;
+                        let (m0, m1, p0, p1) = (ms[0], ms[1], pk[0], pk[1]);
+                        for l in 0..len {
+                            // The gate weight does not depend on the colour: once for both.
+                            let e = (gk[l] - gb[l]) * ib[l];
+                            let wt = 1.0 / (1.0 + e * e);
+                            let (m, d) = (m0[l], p0[l] - gk[l]);
+                            sw0[l] += m * wt;
+                            sd0[l] += (m * wt) * d;
+                            su0[l] += m * d;
+                            n0[l] += m;
+                            let (m, d) = (m1[l], p1[l] - gk[l]);
+                            sw1[l] += m * wt;
+                            sd1[l] += (m * wt) * d;
+                            su1[l] += m * d;
+                            n1[l] += m;
                         }
                     }
                 }
-            }
-            let rk = (i + 1 + py) % p;
-            for cc in 0..2 {
-                let own = &masks[cc][rk][1..1 + e1c];
-                let pc = &planes[cc][(i + 1) * ec + 1..(i + 1) * ec + 1 + e1c];
-                let [sw, sd, su, n] = &acc[cc];
-                let o = &mut d1[cc][i * e1c..(i + 1) * e1c];
-                for j in 0..e1c {
-                    // Every 3x3 window holds at least two sites of each colour, and every
-                    // weight is at least 1 / (1 + e^2) > 0; the mean is a safeguard.
-                    let mixed = if sw[j] > 1e-12 { sd[j] / sw[j] } else { su[j] / n[j] };
-                    o[j] = if own[j] != 0.0 { pc[j] - gc[j] } else { mixed };
+                for (cc, [sw, sd, su, n]) in a.iter().enumerate() {
+                    let own = &masks[cc][rk1][1 + j0..1 + j0 + len];
+                    let pc = &planes[cc][(i + 1) * ec + 1 + j0..(i + 1) * ec + 1 + j0 + len];
+                    let o = &mut d1[cc][i * e1c + j0..i * e1c + j0 + len];
+                    for l in 0..len {
+                        // Every 3x3 window holds at least two sites of each colour, and every
+                        // weight is at least 1 / (1 + e^2) > 0; the mean is a safeguard.
+                        let mixed = if sw[l] > 1e-12 { sd[l] / sw[l] } else { su[l] / n[l] };
+                        o[l] = if own[l] != 0.0 { pc[l] - gc[j0 + l] } else { mixed };
+                    }
                 }
-            }
+            });
         }
         // Pass 2, over the core plus `h` pixels: the same gate over the differences of every
         // pixel (measured and pass-1 values), for the two colours the pixel does not measure.
         let (e2r, e2c) = (nr + 2 * h, nc + 2 * h);
         let mut v2 = vec![[0f32; 3]; e2r * e2c];
         let mut inv = vec![0f32; e2c];
-        let [mut sw, mut sdr, mut sdb] = [vec![0f32; e2c], vec![0f32; e2c], vec![0f32; e2c]];
         for i in 0..e2r {
             let c0 = (i + 2) * ec + 2;
             let gc = &g[c0..c0 + e2c];
             for (v, &x) in inv.iter_mut().zip(gc) {
                 *v = 1.0 / (0.1 * x.max(0.0) + 0.007);
             }
-            sw.fill(0.0);
-            sdr.fill(0.0);
-            sdb.fill(0.0);
-            for dy in 0..3 {
-                for dx in 0..3 {
-                    let k0 = (i + dy + 1) * ec + dx + 1;
-                    let gk = &g[k0..k0 + e2c];
-                    let q0 = (i + dy) * e1c + dx;
-                    let (dr, db) = (&d1[0][q0..q0 + e2c], &d1[1][q0..q0 + e2c]);
-                    for j in 0..e2c {
-                        let e = (gk[j] - gc[j]) * inv[j];
-                        let wt = 1.0 / (1.0 + e * e);
-                        sw[j] += wt;
-                        sdr[j] += wt * dr[j];
-                        sdb[j] += wt * db[j];
+            let rk = (i + 2 + py) % p;
+            blocks!(e2c, |j0, len| {
+                let [mut sw, mut sdr, mut sdb] = [[0f32; CB]; 3];
+                for dy in 0..3 {
+                    for dx in 0..3 {
+                        let k0 = (i + dy + 1) * ec + dx + 1 + j0;
+                        let (gk, gb, ib) = (&g[k0..k0 + len], &gc[j0..j0 + len], &inv[j0..j0 + len]);
+                        let q0 = (i + dy) * e1c + dx + j0;
+                        let (dr, db) = (&d1[0][q0..q0 + len], &d1[1][q0..q0 + len]);
+                        for l in 0..len {
+                            let e = (gk[l] - gb[l]) * ib[l];
+                            let wt = 1.0 / (1.0 + e * e);
+                            sw[l] += wt;
+                            sdr[l] += wt * dr[l];
+                            sdb[l] += wt * db[l];
+                        }
                     }
                 }
-            }
-            let rk = (i + 2 + py) % p;
-            let (own_r, own_b) = (&masks[0][rk][2..2 + e2c], &masks[1][rk][2..2 + e2c]);
-            let (rc, bc) = (&r[c0..c0 + e2c], &bl[c0..c0 + e2c]);
-            let o = &mut v2[i * e2c..(i + 1) * e2c];
-            for j in 0..e2c {
-                o[j] = [
-                    if own_r[j] != 0.0 { rc[j] } else { gc[j] + sdr[j] / sw[j] },
-                    gc[j],
-                    if own_b[j] != 0.0 { bc[j] } else { gc[j] + sdb[j] / sw[j] },
-                ];
-            }
+                let (own_r, own_b) = (&masks[0][rk][2 + j0..2 + j0 + len], &masks[1][rk][2 + j0..2 + j0 + len]);
+                let (rc, bc) = (&r[c0 + j0..c0 + j0 + len], &bl[c0 + j0..c0 + j0 + len]);
+                let o = &mut v2[i * e2c + j0..i * e2c + j0 + len];
+                for l in 0..len {
+                    let gv = gc[j0 + l];
+                    o[l] = [
+                        if own_r[l] != 0.0 { rc[l] } else { gv + sdr[l] / sw[l] },
+                        gv,
+                        if own_b[l] != 0.0 { bc[l] } else { gv + sdb[l] / sw[l] },
+                    ];
+                }
+            });
         }
         if h == 0 {
             out.copy_from_slice(&v2);
