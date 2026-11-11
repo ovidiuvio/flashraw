@@ -1047,11 +1047,11 @@ export class FlashRaw {
   }
 
   /** EXIF metadata as a standalone TIFF stream (a copy), or `null` if the file has none. */
-  async exif() {
+  async exifBytes() {
     return this.#span((r) => r.exifSpan());
   }
   /** XMP packet (UTF-8 XML bytes, a copy), or `null` if the file has none. */
-  async xmp() {
+  async xmpBytes() {
     return this.#span((r) => r.xmpSpan());
   }
   #span(fn) {

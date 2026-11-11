@@ -161,7 +161,7 @@ pub struct FlashRaw<'a> {
     parse_ms: f64,
     /// Limits the file was opened with; they also bound embedded-preview decoding.
     limits: Limits,
-    /// [`FlashRaw::exif`], built on first use.
+    /// [`FlashRaw::exif_bytes`], built on first use.
     exif: std::sync::OnceLock<Option<Vec<u8>>>,
 }
 
@@ -272,7 +272,7 @@ impl<'a> FlashRaw<'a> {
     /// Built from the file on the first call (no sensor decoding), then cached. TIFF-based files
     /// and CR3 are rebuilt from their directories; other files (RAF, X3F) return the EXIF segment of
     /// their embedded JPEG preview as it is.
-    pub fn exif(&self) -> Option<&[u8]> {
+    pub fn exif_bytes(&self) -> Option<&[u8]> {
         self.exif
             .get_or_init(|| flashraw_formats::exif::exif(self.bytes(), self.format(), &self.metadata().previews))
             .as_deref()
@@ -280,7 +280,7 @@ impl<'a> FlashRaw<'a> {
 
     /// The file's XMP packet (UTF-8 XML), zero-copy: TIFF tag 700, the XMP box of a CR3, or the
     /// XMP segment of an embedded JPEG preview. `None` when the file has none.
-    pub fn xmp(&self) -> Option<&[u8]> {
+    pub fn xmp_bytes(&self) -> Option<&[u8]> {
         flashraw_formats::exif::xmp(self.bytes(), self.format(), &self.metadata().previews)
     }
 

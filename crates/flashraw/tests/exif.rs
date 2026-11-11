@@ -1,4 +1,4 @@
-//! `FlashRaw::exif` and `FlashRaw::xmp`: the EXIF of a file as a standalone TIFF stream and its
+//! `FlashRaw::exif_bytes` and `FlashRaw::xmp_bytes`: the EXIF of a file as a standalone TIFF stream and its
 //! XMP packet. The bundled DNGs cover the API; every corpus file, when the corpus is present,
 //! checks that the stream parses as TIFF and names the camera FlashRaw reports.
 
@@ -35,10 +35,10 @@ fn fixture(name: &str) -> Vec<u8> {
 fn exif_is_a_standalone_tiff_with_the_camera_and_exposure() {
     let data = fixture("canon-5d3-mlv.dng");
     let raw = FlashRaw::open(data.as_slice()).unwrap();
-    let exif = raw.exif().expect("EXIF");
+    let exif = raw.exif_bytes().expect("EXIF");
     assert!(exif.starts_with(b"II*\0") || exif.starts_with(b"MM\0*"));
     // Cached after the first call.
-    assert_eq!(raw.exif().unwrap().as_ptr(), exif.as_ptr());
+    assert_eq!(raw.exif_bytes().unwrap().as_ptr(), exif.as_ptr());
     let t = Tiff::parse(exif).unwrap();
     let ifd0 = &t.ifds[0];
     assert_eq!(ifd0.string(tags::MAKE).as_deref(), Some("Canon"));
@@ -46,7 +46,7 @@ fn exif_is_a_standalone_tiff_with_the_camera_and_exposure() {
     assert!(!ifd0.has(tags::STRIP_OFFSETS) && !ifd0.has(tags::TILE_OFFSETS) && !ifd0.has(tags::SUB_IFDS));
     let e = ifd0.exif.as_ref().expect("EXIF IFD");
     assert_eq!(e.u32(0x8827), raw.metadata().exposure.iso);
-    let xmp = raw.xmp().expect("XMP");
+    let xmp = raw.xmp_bytes().expect("XMP");
     assert!(xmp.starts_with(b"<?xpacket") && xmp.ends_with(b">"));
 }
 
@@ -54,8 +54,8 @@ fn exif_is_a_standalone_tiff_with_the_camera_and_exposure() {
 fn files_without_exif_or_xmp() {
     let data = fixture("bmpcc-tiles.dng");
     let raw = FlashRaw::open(data.as_slice()).unwrap();
-    assert!(raw.exif().is_none());
-    assert!(raw.xmp().is_none());
+    assert!(raw.exif_bytes().is_none());
+    assert!(raw.xmp_bytes().is_none());
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn corpus_exif_names_the_camera() {
     for p in &files {
         let Ok(data) = std::fs::read(p) else { continue };
         let Ok(raw) = FlashRaw::open(data.as_slice()) else { continue };
-        let Some(exif) = raw.exif() else { continue };
+        let Some(exif) = raw.exif_bytes() else { continue };
         with += 1;
         let t = Tiff::parse(exif).unwrap_or_else(|e| panic!("{}: EXIF does not parse: {e}", p.display()));
         let make = t.ifds[0].string(tags::MAKE).unwrap_or_default();

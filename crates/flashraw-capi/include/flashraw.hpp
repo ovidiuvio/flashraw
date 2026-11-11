@@ -732,9 +732,9 @@ public:
 
     /// EXIF metadata as a standalone TIFF stream, zero-copy: valid while this file lives. Empty
     /// when the file has none.
-    span<const std::uint8_t> exif() const { return optional_bytes(flashraw_file_exif); }
+    span<const std::uint8_t> exif_bytes() const { return optional_bytes(flashraw_file_exif_bytes); }
     /// XMP packet (UTF-8 XML), zero-copy: valid while this file lives. Empty when the file has none.
-    span<const std::uint8_t> xmp() const { return optional_bytes(flashraw_file_xmp); }
+    span<const std::uint8_t> xmp_bytes() const { return optional_bytes(flashraw_file_xmp_bytes); }
 
     /// All metadata as JSON.
     std::string metadata_json() const { return detail::take_string(flashraw_file_metadata_json(h())); }

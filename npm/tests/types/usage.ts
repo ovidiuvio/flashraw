@@ -66,8 +66,8 @@ export async function usage(buffer: ArrayBuffer, file: Blob): Promise<void> {
     const mime: string = preview.mimeType;
     void new Blob([bytes], { type: mime });
   }
-  const exif: Uint8Array | null = await raw.exif();
-  const xmp: Uint8Array | null = await raw.xmp();
+  const exif: Uint8Array | null = await raw.exifBytes();
+  const xmp: Uint8Array | null = await raw.xmpBytes();
   void exif;
   void xmp;
   const thumb = await raw.thumbnail({ format: 'rgba8' });

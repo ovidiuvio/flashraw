@@ -807,20 +807,20 @@ fn exif_and_xmp_bytes() {
     // SAFETY: live handles until freed at the end.
     unsafe {
         let mut len = 0usize;
-        let p = flashraw_file_exif(f, &mut len);
+        let p = flashraw_file_exif_bytes(f, &mut len);
         assert!(!p.is_null() && len > 8);
         let b = std::slice::from_raw_parts(p, len);
         assert!(b.starts_with(b"II*\0") || b.starts_with(b"MM\0*"));
         // Cached: the same bytes on the second call.
-        assert_eq!(flashraw_file_exif(f, &mut len), p);
-        let x = flashraw_file_xmp(f, &mut len);
+        assert_eq!(flashraw_file_exif_bytes(f, &mut len), p);
+        let x = flashraw_file_xmp_bytes(f, &mut len);
         assert!(!x.is_null());
         assert!(std::slice::from_raw_parts(x, len).starts_with(b"<?xpacket"));
-        assert!(flashraw_file_exif(none, &mut len).is_null());
+        assert!(flashraw_file_exif_bytes(none, &mut len).is_null());
         assert_eq!(len, 0);
         assert_eq!(flashraw_last_error_code(), flashraw_status::FLASHRAW_ERROR_NOT_AVAILABLE);
-        assert!(flashraw_file_xmp(none, &mut len).is_null());
-        assert!(flashraw_file_exif(f, std::ptr::null_mut()).is_null());
+        assert!(flashraw_file_xmp_bytes(none, &mut len).is_null());
+        assert!(flashraw_file_exif_bytes(f, std::ptr::null_mut()).is_null());
         flashraw_file_free(f);
         flashraw_file_free(none);
     }

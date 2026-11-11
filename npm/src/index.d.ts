@@ -923,9 +923,9 @@ export declare class FlashRaw {
    * holds after `Exif\0\0`): IFD0, the EXIF, GPS and interoperability directories and the maker
    * note, for EXIF libraries that read tags `metadata` does not. A copy; null when the file has none.
    */
-  exif(): Promise<Uint8Array | null>;
+  exifBytes(): Promise<Uint8Array | null>;
   /** XMP packet (UTF-8 XML bytes, a copy), or null when the file has none. */
-  xmp(): Promise<Uint8Array | null>;
+  xmpBytes(): Promise<Uint8Array | null>;
 
   decode<O extends OutputFormat | GpuOutputFormat = 'raw-u16', S extends SampleType = 'f32'>(
     options?: DecodeOptions & { output?: O; sampleType?: S },

@@ -390,14 +390,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::Exif { file, out } => {
             let raw = open(&file)?;
-            let exif = raw.exif().ok_or("file has no EXIF metadata")?;
+            let exif = raw.exif_bytes().ok_or("file has no EXIF metadata")?;
             std::fs::write(&out, exif).map_err(|e| format!("{}: {e}", out.display()))?;
             eprintln!("wrote {} ({} bytes)", out.display(), exif.len());
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Xmp { file, out } => {
             let raw = open(&file)?;
-            let xmp = raw.xmp().ok_or("file has no XMP metadata")?;
+            let xmp = raw.xmp_bytes().ok_or("file has no XMP metadata")?;
             std::fs::write(&out, xmp).map_err(|e| format!("{}: {e}", out.display()))?;
             eprintln!("wrote {} ({} bytes)", out.display(), xmp.len());
             Ok(ExitCode::SUCCESS)

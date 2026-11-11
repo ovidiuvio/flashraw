@@ -238,12 +238,12 @@ mod bindings {
         /// as long as this handle.
         #[wasm_bindgen(js_name = exifSpan)]
         pub fn exif_span(&self) -> JsValue {
-            span(self.raw.exif())
+            span(self.raw.exif_bytes())
         }
         /// `[ptr, len]` of the XMP packet, or `null`.
         #[wasm_bindgen(js_name = xmpSpan)]
         pub fn xmp_span(&self) -> JsValue {
-            span(self.raw.xmp())
+            span(self.raw.xmp_bytes())
         }
         /// Decode a preview to RGBA8.
         #[wasm_bindgen(js_name = decodePreview)]

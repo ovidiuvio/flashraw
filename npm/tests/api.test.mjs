@@ -259,21 +259,21 @@ describe('exif and xmp', () => {
   test('EXIF as a standalone TIFF stream, XMP packet, null when absent', async () => {
     const raw = await FlashRaw.openFile(fixture('canon-5d3-mlv.dng'));
     try {
-      const exif = await raw.exif();
+      const exif = await raw.exifBytes();
       assert.ok(exif instanceof Uint8Array);
       const head = String.fromCharCode(...exif.subarray(0, 2));
       assert.ok(head === 'II' || head === 'MM');
       assert.ok(Buffer.from(exif).includes('Canon EOS 5D Mark III'));
-      assert.deepEqual(await raw.exif(), exif);
-      const xmp = new TextDecoder().decode(await raw.xmp());
+      assert.deepEqual(await raw.exifBytes(), exif);
+      const xmp = new TextDecoder().decode(await raw.xmpBytes());
       assert.ok(xmp.startsWith('<?xpacket'));
     } finally {
       raw.close();
     }
     const none = await FlashRaw.openFile(fixture('bmpcc-tiles.dng'));
     try {
-      assert.equal(await none.exif(), null);
-      assert.equal(await none.xmp(), null);
+      assert.equal(await none.exifBytes(), null);
+      assert.equal(await none.xmpBytes(), null);
     } finally {
       none.close();
     }

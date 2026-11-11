@@ -770,9 +770,9 @@ pub unsafe extern "C" fn flashraw_file_preview_bytes(
 /// # Safety
 /// `f` must be NULL or a live handle; `len` must be NULL or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn flashraw_file_exif(f: *const flashraw_file, len: *mut usize) -> *const u8 {
+pub unsafe extern "C" fn flashraw_file_exif_bytes(f: *const flashraw_file, len: *mut usize) -> *const u8 {
     // SAFETY: caller contract.
-    unsafe { metadata_bytes(f, len, "EXIF", |r| r.exif()) }
+    unsafe { metadata_bytes(f, len, "EXIF", |r| r.exif_bytes()) }
 }
 
 /// The XMP packet (UTF-8 XML, not NUL-terminated), zero-copy: valid until
@@ -782,13 +782,13 @@ pub unsafe extern "C" fn flashraw_file_exif(f: *const flashraw_file, len: *mut u
 /// # Safety
 /// `f` must be NULL or a live handle; `len` must be NULL or writable.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn flashraw_file_xmp(f: *const flashraw_file, len: *mut usize) -> *const u8 {
+pub unsafe extern "C" fn flashraw_file_xmp_bytes(f: *const flashraw_file, len: *mut usize) -> *const u8 {
     // SAFETY: caller contract.
-    unsafe { metadata_bytes(f, len, "XMP", |r| r.xmp()) }
+    unsafe { metadata_bytes(f, len, "XMP", |r| r.xmp_bytes()) }
 }
 
 /// # Safety
-/// As [`flashraw_file_exif`].
+/// As [`flashraw_file_exif_bytes`].
 unsafe fn metadata_bytes(
     f: *const flashraw_file,
     len: *mut usize,

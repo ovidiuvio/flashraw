@@ -459,17 +459,17 @@ class RawFile:
     # -- EXIF and XMP ---------------------------------------------------------------------
 
     @property
-    def exif(self) -> Optional[bytes]:
+    def exif_bytes(self) -> Optional[bytes]:
         """The EXIF metadata as a standalone TIFF stream (``II*\\0`` or ``MM\\0*``, what a JPEG's APP1
         segment holds after ``Exif\\0\\0``): IFD0, the EXIF, GPS and interoperability directories and
         the maker note, for EXIF libraries that read tags :attr:`metadata` does not (``exifread``,
         ``piexif`` with the ``Exif\\0\\0`` prefix, ...). ``None`` when the file has no EXIF."""
-        return self._native.exif()
+        return self._native.exif_bytes()
 
     @property
-    def xmp(self) -> Optional[bytes]:
+    def xmp_bytes(self) -> Optional[bytes]:
         """The XMP packet (UTF-8 XML), or ``None`` when the file has none."""
-        return self._native.xmp()
+        return self._native.xmp_bytes()
 
     # -- previews -------------------------------------------------------------------------
 

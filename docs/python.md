@@ -123,16 +123,16 @@ Selectors: `"largest"` (default), `"smallest"`, an index into `raw.previews` or 
 
 ## EXIF and XMP
 
-`raw.metadata` normalises the common tags. For every other EXIF tag, maker notes included, `raw.exif` gives
+`raw.metadata` normalises the common tags. For every other EXIF tag, maker notes included, `raw.exif_bytes` gives
 the EXIF as a standalone TIFF stream (`bytes`, or `None` when the file has none) for an EXIF library, and
-`raw.xmp` the XMP packet:
+`raw.xmp_bytes` the XMP packet:
 
 ```python
 import io, exifread
 with flashraw.open("photo.CR3") as raw:
-    tags = exifread.process_file(io.BytesIO(raw.exif))   # IFD0, EXIF, GPS, maker note
-    app1 = b"Exif\0\0" + raw.exif                       # the payload of a JPEG APP1 segment (piexif)
-    xml = raw.xmp.decode() if raw.xmp else None
+    tags = exifread.process_file(io.BytesIO(raw.exif_bytes))   # IFD0, EXIF, GPS, maker note
+    app1 = b"Exif\0\0" + raw.exif_bytes                        # the payload of a JPEG APP1 segment (piexif)
+    xml = raw.xmp_bytes.decode() if raw.xmp_bytes else None
 ```
 
 TIFF-based files and CR3 are rebuilt from their directories (without pointers to image data); the maker

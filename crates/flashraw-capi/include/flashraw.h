@@ -1637,7 +1637,7 @@ const uint8_t *flashraw_file_preview_bytes(const struct flashraw_file *f,
  * # Safety
  * `f` must be NULL or a live handle; `len` must be NULL or writable.
  */
-const uint8_t *flashraw_file_exif(const struct flashraw_file *f, size_t *len);
+const uint8_t *flashraw_file_exif_bytes(const struct flashraw_file *f, size_t *len);
 
 /**
  * The XMP packet (UTF-8 XML, not NUL-terminated), zero-copy: valid until
@@ -1647,7 +1647,7 @@ const uint8_t *flashraw_file_exif(const struct flashraw_file *f, size_t *len);
  * # Safety
  * `f` must be NULL or a live handle; `len` must be NULL or writable.
  */
-const uint8_t *flashraw_file_xmp(const struct flashraw_file *f, size_t *len);
+const uint8_t *flashraw_file_xmp_bytes(const struct flashraw_file *f, size_t *len);
 
 /**
  * Number of independently decodable units (tiles / strips) of the payload.

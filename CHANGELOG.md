@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-- EXIF and XMP as bytes, for EXIF libraries that read tags `metadata` does not (issue #4): `FlashRaw::exif()`
-  (`flashraw exif FILE OUT`, Python `raw.exif`, JavaScript `await raw.exif()`, C `flashraw_file_exif`, C++
-  `file::exif()`) returns a standalone TIFF stream (`II*\0` or `MM\0*`, a JPEG APP1 payload after `Exif\0\0`) with
-  IFD0, the EXIF, GPS and interoperability directories and the maker note; `FlashRaw::xmp()` (`flashraw xmp`,
-  `raw.xmp`, `await raw.xmp()`, `flashraw_file_xmp`, `file::xmp()`) the XMP packet. TIFF-based files and CR3 are
+- EXIF and XMP as bytes, for EXIF libraries that read tags `metadata` does not (issue #4): `FlashRaw::exif_bytes()`
+  (`flashraw exif FILE OUT`, Python `raw.exif_bytes`, JavaScript `await raw.exifBytes()`, C `flashraw_file_exif_bytes`, C++
+  `file::exif_bytes()`) returns a standalone TIFF stream (`II*\0` or `MM\0*`, a JPEG APP1 payload after `Exif\0\0`) with
+  IFD0, the EXIF, GPS and interoperability directories and the maker note; `FlashRaw::xmp_bytes()` (`flashraw xmp`,
+  `raw.xmp_bytes`, `await raw.xmpBytes()`, `flashraw_file_xmp_bytes`, `file::xmp_bytes()`) the XMP packet. TIFF-based files and CR3 are
   rebuilt from their directories without the pointers to image data; the maker note keeps its offset from the TIFF
   header, so the vendor offsets inside it stay valid. RAF and X3F return the EXIF segment of their embedded JPEG.
   On 116 corpus files of 31 extensions, 102 have EXIF and 33 XMP; `kamadak-exif` reads all 102 streams. For the 90 whose original an independent parser
