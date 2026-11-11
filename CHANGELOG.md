@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-11-11
+
+RGB outputs change: the default demosaic is now `Demosaic::Auto` (AHD on Bayer, edge-aware on X-Trans); pass
+`bilinear` for the 0.1 output and speed. Raw outputs are unchanged.
 
 - Edge-aware on X-Trans (the default there): green at red and blue sites is re-estimated from the measured sample
   and the cleaned colour difference (fully on clean frames, less on noisy ones; CPU and GPU). The filtered green at
