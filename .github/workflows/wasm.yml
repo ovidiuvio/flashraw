@@ -43,7 +43,10 @@ jobs:
       - name: Native CLI (expected hashes for the WASM tests, JPEG XL included)
         working-directory: .
         run: cargo build --release -p flashraw-cli --features jpegxl
+      # Not in release builds (release.yml passes a tag as `ref`): the local CI lints before tagging, and a newer
+      # toolchain's new lints must not block publishing a tag that cannot change.
       - name: Clippy (single-threaded, WebGPU, threaded and JPEG XL bindings)
+        if: inputs.ref == ''
         working-directory: .
         run: |
           cargo clippy -p flashraw-wasm --target wasm32-unknown-unknown -- -D warnings
