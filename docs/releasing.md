@@ -1,8 +1,8 @@
 # Releasing
 
 A checklist for a release of all packages ([packages.md](packages.md)). The first release, `0.1.0`, was published on 2026-10-25
-(crates.io, PyPI and npm by hand). There are no automatic GitHub workflows: everything below is run by hand, after
-the local CI ([testing.md](testing.md), `tools/ci/local.sh --full` on Linux and `tools/ci/mac.sh --full`).
+(crates.io, PyPI and npm by hand); since then a published GitHub release publishes to the registries
+(`release.yml`, first used for npm 0.2.0). Everything before that is run by hand, after the local CI ([testing.md](testing.md), `tools/ci/local.sh --full` on Linux and `tools/ci/mac.sh --full`).
 
 ## Before tagging
 
@@ -23,24 +23,26 @@ the local CI ([testing.md](testing.md), `tools/ci/local.sh --full` on Linux and 
 
 ## Publish
 
-1. **crates.io**, in dependency order: `flashraw-camera-db`, `flashraw-core`, `flashraw-codecs`,
-   `flashraw-formats`, `flashraw-gpu`, `flashraw`, `flashraw-cli`.
-   `cargo publish --workspace` publishes them in that order and waits for the index between crates
-   (needs `cargo login`); or publish one by one with `cargo publish -p <crate>`. A published version cannot be
-   replaced, only yanked.
-2. **npm**: `cd npm && npm run build` (needs the wasm toolchain, see [wasm.md](wasm.md)), `npm test`,
-   `npm pack --dry-run` (the `prepack` hook refuses an incomplete `dist/`; check the file list includes
-   the licence files), then `npm publish`.
-3. **PyPI**: build the wheels and the sdist with maturin (the platforms of `.github/workflows/python.yml`,
-   run on manual dispatch, or locally: `cd crates/flashraw-python && maturin build --release` per platform,
-   `maturin sdist`), install each wheel into a clean environment and run `pytest crates/flashraw-python/tests`,
-   check the licence files are in the wheel (`unzip -l`) and sdist, then `maturin upload` / `twine upload`.
+Publishing is done by `.github/workflows/release.yml`, the one workflow that starts without a manual dispatch:
+it runs when a GitHub release is published. It checks that the tag is `v<version>` and matches `Cargo.toml` and
+`npm/package.json`, builds and tests the wheels and the sdist (`python.yml`) and the npm package (`wasm.yml`)
+from the tag, then publishes to crates.io (in dependency order: `flashraw-camera-db`, `flashraw-core`,
+`flashraw-codecs`, `flashraw-formats`, `flashraw-gpu`, `flashraw`, `flashraw-cli`), PyPI and npm. No tokens are
+stored: each registry has a trusted publisher for the repository `ybouane/flashraw`, the workflow `release.yml`
+and the environment `release`. Versions already on a registry are skipped, so a run can be repeated.
+
+1. **Tag**: `git tag -a v0.2.0 -m "FlashRaw 0.2.0" && git push origin main v0.2.0`.
+2. **GitHub release**: create it from the tag with the CHANGELOG entry as notes
+   (`gh release create v0.2.0 --title "FlashRaw 0.2.0" --notes-file notes.md --verify-tag`) and attach the C library
+   archives if built. Publishing the release starts `release.yml`; follow it with `gh run watch`.
+3. **Repeat or one registry only**: `gh workflow run release.yml -f tag=v0.2.0 -f crates=false -f pypi=false`
+   (here npm only). A published version cannot be replaced, only yanked (crates.io), deleted (PyPI) or deprecated (npm).
 4. **C library**: for each platform `cargo build --release -p flashraw-capi --features gpu,jpegxl` (or the CMake
    install); archive the shared and static library, `flashraw.h`, `flashraw.hpp`, `LICENSE-MIT`, `LICENSE-APACHE`.
-5. **Tag and GitHub release**: `git tag -a v0.1.0 -m "FlashRaw 0.1.0" && git push origin v0.1.0` (pushing is done by hand, by the
-   maintainer), create the release from the CHANGELOG entry and attach the C library archives (and prebuilt
-   `flashraw` binaries, if built).
-6. Deploy the demo (`demo/`) if it should advertise the new version.
+5. Deploy the demo (`demo/`) if it should advertise the new version.
+
+By hand, if the workflow cannot run: `cargo publish --workspace` (needs `cargo login`); `cd npm && npm run build &&
+npm test && npm publish`; the wheels and sdist of a manual `python.yml` run, uploaded with `twine upload`.
 
 ## After
 

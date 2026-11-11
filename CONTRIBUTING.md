@@ -23,7 +23,8 @@ The WebAssembly, npm, Python and C packages have their own build steps: [docs/bu
 
 ## Local CI, and why there are no GitHub workflows
 
-The project does not run hosted CI. The workflows in `.github/workflows/` start only on manual dispatch, and
+The project does not run hosted CI. The workflows in `.github/workflows/` start only on manual dispatch (except
+`release.yml`, which publishes the packages when a GitHub release is published), and
 their steps are mirrored by scripts you run on your own machine before pushing:
 
 ```sh

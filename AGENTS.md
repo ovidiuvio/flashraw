@@ -352,8 +352,9 @@ built earlier from this tree (the Python extension without a wheel build); the J
   `cargo fmt --all --check`. Corpus tests (`cargo test --release -p flashraw --test regression --test malformed`)
   need the CC0 corpus in `corpus/` (`python3 tools/corpus/fetch.py`) and skip or fail loudly without it.
 * Local CI: `tools/ci/local.sh` (`--quick`, `--full`, `--list`); macOS via `tools/ci/mac.sh`. The GitHub
-  workflows are manual-only on purpose: do not add workflows that run automatically, and do not describe CI
-  as automatic. Run the local CI before reporting work as done.
+  workflows are manual-only on purpose, except `release.yml`, which publishes to crates.io, PyPI and npm when
+  the maintainer publishes a GitHub release ([docs/releasing.md](docs/releasing.md)): do not add workflows that
+  run automatically, and do not describe CI as automatic. Run the local CI before reporting work as done.
 * Camera database policy: every value in `crates/flashraw-camera-db/data/cameras.json` must be backed by sample
   files (CC0 or the maintainers' own); never copy numbers from other projects. Validate with
   `flashraw camera-db validate`; tools in `tools/camera_db/`.

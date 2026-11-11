@@ -110,7 +110,8 @@ cargo +nightly fuzz run -O open_decode fuzz/corpus/open_decode fuzz/seeds/open_d
 ## CI
 
 CI runs locally, not on hosted runners: the workflows in `.github/workflows/` are kept as
-references for the steps but only start on manual dispatch.
+references for the steps but only start on manual dispatch. The exception is `release.yml`, which
+publishes to the package registries when a GitHub release is published ([releasing.md](releasing.md)).
 
 ```sh
 tools/ci/local.sh                    # the steps the changes since origin/main need (default)
