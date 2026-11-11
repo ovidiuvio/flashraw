@@ -131,6 +131,11 @@ enum Cmd {
     Preview { file: PathBuf, out: PathBuf },
     /// Extract the smallest embedded preview (thumbnail).
     Thumbnail { file: PathBuf, out: PathBuf },
+    /// Write the EXIF metadata as a standalone TIFF stream (IFD0, EXIF, GPS, maker note) for other
+    /// EXIF tools.
+    Exif { file: PathBuf, out: PathBuf },
+    /// Write the XMP packet (XML).
+    Xmp { file: PathBuf, out: PathBuf },
     /// Benchmark decoding.
     Benchmark {
         files: Vec<PathBuf>,
@@ -381,6 +386,20 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let p = raw.thumbnail().cloned().ok_or("file has no embedded thumbnail")?;
             output::write_preview(&raw, &p, &out)?;
             eprintln!("wrote {} ({}x{} {:?})", out.display(), p.width, p.height, p.encoding);
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Exif { file, out } => {
+            let raw = open(&file)?;
+            let exif = raw.exif().ok_or("file has no EXIF metadata")?;
+            std::fs::write(&out, exif).map_err(|e| format!("{}: {e}", out.display()))?;
+            eprintln!("wrote {} ({} bytes)", out.display(), exif.len());
+            Ok(ExitCode::SUCCESS)
+        }
+        Cmd::Xmp { file, out } => {
+            let raw = open(&file)?;
+            let xmp = raw.xmp().ok_or("file has no XMP metadata")?;
+            std::fs::write(&out, xmp).map_err(|e| format!("{}: {e}", out.display()))?;
+            eprintln!("wrote {} ({} bytes)", out.display(), xmp.len());
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Benchmark { files, iterations, args } => {
