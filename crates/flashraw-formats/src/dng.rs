@@ -285,7 +285,7 @@ fn illuminant_data_xy(b: &[u8], order: ByteOrder) -> Option<(f64, f64)> {
     }
     let rat = |o: usize| -> Option<f64> {
         let (n, d) = (u32_at(o)?, u32_at(o + 4)?);
-        (d != 0).then(|| n as f64 / d as f64)
+        (d != 0).then_some(n as f64 / d as f64)
     };
     Some((rat(2)?, rat(10)?))
 }
