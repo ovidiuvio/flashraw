@@ -161,6 +161,8 @@ pub struct FlashRaw<'a> {
     parse_ms: f64,
     /// Limits the file was opened with; they also bound embedded-preview decoding.
     limits: Limits,
+    /// [`FlashRaw::exif`], built on first use.
+    exif: std::sync::OnceLock<Option<Vec<u8>>>,
 }
 
 impl std::fmt::Debug for FlashRaw<'_> {
@@ -189,7 +191,7 @@ impl<'a> FlashRaw<'a> {
         let bytes: &'a [u8] = unsafe { std::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
         let decoder = flashraw_formats::open(bytes, &flashraw_formats::OpenOptions { limits })?;
         let parse_ms = flashraw_core::profile::now_ms() - t0;
-        Ok(FlashRaw { decoder, source, parse_ms, limits })
+        Ok(FlashRaw { decoder, source, parse_ms, limits, exif: std::sync::OnceLock::new() })
     }
 
     /// Normalised metadata (no pixel decoding involved).
@@ -259,6 +261,27 @@ impl<'a> FlashRaw<'a> {
     /// Raw bytes of an embedded preview (e.g. a JPEG), zero-copy.
     pub fn preview_bytes(&self, p: &PreviewInfo) -> Result<&[u8]> {
         flashraw_core::bytes::slice_at(self.bytes(), p.offset as usize, p.length as usize)
+    }
+
+    /// The file's EXIF metadata as a standalone TIFF stream (`II*\0` or `MM\0*`, what a JPEG's APP1
+    /// segment holds after `Exif\0\0`), for EXIF parsers that read tags [`metadata`](Self::metadata)
+    /// does not. It holds IFD0 (without pointers to image data), the EXIF, GPS and interoperability
+    /// directories and the maker note, which keeps its offset from the TIFF header so the vendor
+    /// offsets inside it stay valid. `None` when the file has no EXIF (for example CRW).
+    ///
+    /// Built from the file on the first call (no sensor decoding), then cached. TIFF-based files
+    /// and CR3 are rebuilt from their directories; other files (RAF, X3F) return the EXIF segment of
+    /// their embedded JPEG preview as it is.
+    pub fn exif(&self) -> Option<&[u8]> {
+        self.exif
+            .get_or_init(|| flashraw_formats::exif::exif(self.bytes(), self.format(), &self.metadata().previews))
+            .as_deref()
+    }
+
+    /// The file's XMP packet (UTF-8 XML), zero-copy: TIFF tag 700, the XMP box of a CR3, or the
+    /// XMP segment of an embedded JPEG preview. `None` when the file has none.
+    pub fn xmp(&self) -> Option<&[u8]> {
+        flashraw_formats::exif::xmp(self.bytes(), self.format(), &self.metadata().previews)
     }
 
     /// Decode a JPEG or uncompressed RGB preview to 8-bit RGB. Orientation is not

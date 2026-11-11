@@ -15,6 +15,7 @@
 
 pub mod common;
 pub mod dng;
+pub mod exif;
 
 pub mod canon;
 pub mod fuji;
