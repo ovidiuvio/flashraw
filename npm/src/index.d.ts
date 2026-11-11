@@ -918,6 +918,14 @@ export declare class FlashRaw {
   preview<T extends PreviewOptions | undefined = undefined>(options?: T): Promise<PreviewFor<T> | null>;
   /** Smallest embedded preview, or null if there is none. */
   thumbnail<T extends PreviewOptions | undefined = undefined>(options?: T): Promise<PreviewFor<T> | null>;
+  /**
+   * EXIF metadata as a standalone TIFF stream (`II*\0` or `MM\0*`, what a JPEG's APP1 segment
+   * holds after `Exif\0\0`): IFD0, the EXIF, GPS and interoperability directories and the maker
+   * note, for EXIF libraries that read tags `metadata` does not. A copy; null when the file has none.
+   */
+  exif(): Promise<Uint8Array | null>;
+  /** XMP packet (UTF-8 XML bytes, a copy), or null when the file has none. */
+  xmp(): Promise<Uint8Array | null>;
 
   decode<O extends OutputFormat | GpuOutputFormat = 'raw-u16', S extends SampleType = 'f32'>(
     options?: DecodeOptions & { output?: O; sampleType?: S },

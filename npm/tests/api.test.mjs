@@ -255,6 +255,31 @@ for (const file of fixtures) {
   });
 }
 
+describe('exif and xmp', () => {
+  test('EXIF as a standalone TIFF stream, XMP packet, null when absent', async () => {
+    const raw = await FlashRaw.openFile(fixture('canon-5d3-mlv.dng'));
+    try {
+      const exif = await raw.exif();
+      assert.ok(exif instanceof Uint8Array);
+      const head = String.fromCharCode(...exif.subarray(0, 2));
+      assert.ok(head === 'II' || head === 'MM');
+      assert.ok(Buffer.from(exif).includes('Canon EOS 5D Mark III'));
+      assert.deepEqual(await raw.exif(), exif);
+      const xmp = new TextDecoder().decode(await raw.xmp());
+      assert.ok(xmp.startsWith('<?xpacket'));
+    } finally {
+      raw.close();
+    }
+    const none = await FlashRaw.openFile(fixture('bmpcc-tiles.dng'));
+    try {
+      assert.equal(await none.exif(), null);
+      assert.equal(await none.xmp(), null);
+    } finally {
+      none.close();
+    }
+  });
+});
+
 describe('inputs', () => {
   const file = fixture('canon-5d3-mlv.dng');
   const buf = readFileSync(file);

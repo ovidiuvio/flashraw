@@ -95,6 +95,10 @@ export function serve(api, port) {
           return raw.preview({ ...(a[0] ?? {}), zeroCopy: false });
         case 'thumbnail':
           return raw.thumbnail({ ...(a[0] ?? {}), zeroCopy: false });
+        case 'exif':
+          return raw.exif();
+        case 'xmp':
+          return raw.xmp();
         default:
           throw new InvalidArgumentError(`unknown method ${JSON.stringify(method)}`);
       }
@@ -219,6 +223,12 @@ export class RemoteFlashRaw {
   }
   thumbnail(options) {
     return this.#call('thumbnail', [], options);
+  }
+  exif(options) {
+    return this.#call('exif', [], options);
+  }
+  xmp(options) {
+    return this.#call('xmp', [], options);
   }
   async close() {
     const h = this.#handle;

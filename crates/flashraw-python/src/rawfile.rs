@@ -661,6 +661,16 @@ impl RawFile {
         self.run_decode(py, req)
     }
 
+    /// The EXIF metadata as a standalone TIFF stream, or `None`.
+    fn exif<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        self.with(py, |raw| Ok(raw.exif().map(|b| PyBytes::new(py, b))))
+    }
+
+    /// The XMP packet, or `None`.
+    fn xmp<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyBytes>>> {
+        self.with(py, |raw| Ok(raw.xmp().map(|b| PyBytes::new(py, b))))
+    }
+
     /// The encoded bytes of an embedded preview (usually JPEG) and its description.
     #[pyo3(signature = (which=None))]
     fn preview_bytes<'py>(

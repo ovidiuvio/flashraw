@@ -293,6 +293,18 @@ def test_to_pil(mlv_path: pathlib.Path) -> None:
         assert p is not None and p.to_pil().size == (p.info.width, p.info.height)
 
 
+def test_exif_and_xmp(mlv_path: pathlib.Path) -> None:
+    with flashraw.open(mlv_path) as raw:
+        exif = raw.exif
+        assert isinstance(exif, bytes) and exif[:4] in (b"II*\x00", b"MM\x00*")
+        assert raw.exif == exif
+        assert b"Canon EOS 5D Mark III" in exif
+        xmp = raw.xmp
+        assert xmp is not None and xmp.startswith(b"<?xpacket")
+    with flashraw.open(fixture_path("bmpcc-tiles.dng")) as raw:
+        assert raw.exif is None and raw.xmp is None
+
+
 def test_context_manager_closes(mlv_path: pathlib.Path) -> None:
     with flashraw.open(mlv_path) as raw:
         frame = raw.decode()

@@ -1628,6 +1628,28 @@ const uint8_t *flashraw_file_preview_bytes(const struct flashraw_file *f,
                                            size_t *len);
 
 /**
+ * The EXIF metadata as a standalone TIFF stream (`II*\0` or `MM\0*`, what a JPEG's APP1
+ * segment holds after `Exif\0\0`): IFD0, the EXIF, GPS and interoperability directories and
+ * the maker note, for EXIF libraries. Built on the first call; the pointer stays valid until
+ * `flashraw_file_free()`. Stores the length in `*len`. Returns NULL with
+ * `FLASHRAW_ERROR_NOT_AVAILABLE` when the file has no EXIF.
+ *
+ * # Safety
+ * `f` must be NULL or a live handle; `len` must be NULL or writable.
+ */
+const uint8_t *flashraw_file_exif(const struct flashraw_file *f, size_t *len);
+
+/**
+ * The XMP packet (UTF-8 XML, not NUL-terminated), zero-copy: valid until
+ * `flashraw_file_free()`. Stores the length in `*len`. Returns NULL with
+ * `FLASHRAW_ERROR_NOT_AVAILABLE` when the file has none.
+ *
+ * # Safety
+ * `f` must be NULL or a live handle; `len` must be NULL or writable.
+ */
+const uint8_t *flashraw_file_xmp(const struct flashraw_file *f, size_t *len);
+
+/**
  * Number of independently decodable units (tiles / strips) of the payload.
  *
  * # Safety

@@ -80,6 +80,10 @@ export declare class RemoteFlashRaw {
   ): Promise<WorkerFrame<O, S>>;
   preview<T extends Omit<PreviewOptions, 'zeroCopy'> | undefined = undefined>(options?: T & CancelOption): Promise<PreviewFor<T> | null>;
   thumbnail<T extends Omit<PreviewOptions, 'zeroCopy'> | undefined = undefined>(options?: T & CancelOption): Promise<PreviewFor<T> | null>;
+  /** EXIF metadata as a standalone TIFF stream, or null. */
+  exif(options?: CancelOption): Promise<Uint8Array | null>;
+  /** XMP packet (UTF-8 XML bytes), or null. */
+  xmp(options?: CancelOption): Promise<Uint8Array | null>;
   close(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }

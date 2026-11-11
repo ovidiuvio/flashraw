@@ -61,6 +61,12 @@ describe('worker pool (worker_threads)', () => {
       const reg = await raw.decodeRegion({ x: 10, y: 10, width: 32, height: 16 });
       assert.equal(reg.data.length, 32 * 16);
       assert.equal(await raw.preview(), null);
+      assert.equal(await raw.exif(), null);
+      assert.equal(await raw.xmp(), null);
+      const mlv = await pool.open(fixture('canon-5d3-mlv.dng'));
+      const exif = await mlv.exif();
+      assert.ok(exif instanceof Uint8Array && exif.length > 8);
+      await mlv.close();
       await raw.close();
       await assert.rejects(raw.decode(), { kind: 'Closed' });
     } finally {

@@ -1046,6 +1046,19 @@ export class FlashRaw {
     return this.#preview('smallest', options);
   }
 
+  /** EXIF metadata as a standalone TIFF stream (a copy), or `null` if the file has none. */
+  async exif() {
+    return this.#span((r) => r.exifSpan());
+  }
+  /** XMP packet (UTF-8 XML bytes, a copy), or `null` if the file has none. */
+  async xmp() {
+    return this.#span((r) => r.xmpSpan());
+  }
+  #span(fn) {
+    const s = this.#call(fn);
+    return s ? heap(this.#eng, Uint8Array, s[0], s[1]).slice() : null;
+  }
+
   #preview(which, options) {
     const o = checkObject(options, 'preview options');
     const sel = o.index !== undefined && o.index !== null ? String(o.index) : which;

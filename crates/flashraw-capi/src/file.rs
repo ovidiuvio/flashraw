@@ -761,6 +761,53 @@ pub unsafe extern "C" fn flashraw_file_preview_bytes(
     })
 }
 
+/// The EXIF metadata as a standalone TIFF stream (`II*\0` or `MM\0*`, what a JPEG's APP1
+/// segment holds after `Exif\0\0`): IFD0, the EXIF, GPS and interoperability directories and
+/// the maker note, for EXIF libraries. Built on the first call; the pointer stays valid until
+/// `flashraw_file_free()`. Stores the length in `*len`. Returns NULL with
+/// `FLASHRAW_ERROR_NOT_AVAILABLE` when the file has no EXIF.
+///
+/// # Safety
+/// `f` must be NULL or a live handle; `len` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn flashraw_file_exif(f: *const flashraw_file, len: *mut usize) -> *const u8 {
+    // SAFETY: caller contract.
+    unsafe { metadata_bytes(f, len, "EXIF", |r| r.exif()) }
+}
+
+/// The XMP packet (UTF-8 XML, not NUL-terminated), zero-copy: valid until
+/// `flashraw_file_free()`. Stores the length in `*len`. Returns NULL with
+/// `FLASHRAW_ERROR_NOT_AVAILABLE` when the file has none.
+///
+/// # Safety
+/// `f` must be NULL or a live handle; `len` must be NULL or writable.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn flashraw_file_xmp(f: *const flashraw_file, len: *mut usize) -> *const u8 {
+    // SAFETY: caller contract.
+    unsafe { metadata_bytes(f, len, "XMP", |r| r.xmp()) }
+}
+
+/// # Safety
+/// As [`flashraw_file_exif`].
+unsafe fn metadata_bytes(
+    f: *const flashraw_file,
+    len: *mut usize,
+    what: &str,
+    get: impl for<'r> Fn(&'r flashraw::FlashRaw<'static>) -> Option<&'r [u8]>,
+) -> *const u8 {
+    with_file(f, std::ptr::null(), |f| {
+        if len.is_null() {
+            return Err(FfiError::null("len"));
+        }
+        // SAFETY: `len` is non-null and writable (contract).
+        unsafe { len.write(0) };
+        let b = get(&f.raw).ok_or_else(|| FfiError::not_available(format!("the file has no {what} metadata")))?;
+        // SAFETY: as above.
+        unsafe { len.write(b.len()) };
+        Ok(b.as_ptr())
+    })
+}
+
 /// Number of independently decodable units (tiles / strips) of the payload.
 ///
 /// # Safety

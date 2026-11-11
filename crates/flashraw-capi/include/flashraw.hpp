@@ -730,6 +730,12 @@ public:
         return span<const std::uint8_t>(p, len);
     }
 
+    /// EXIF metadata as a standalone TIFF stream, zero-copy: valid while this file lives. Empty
+    /// when the file has none.
+    span<const std::uint8_t> exif() const { return optional_bytes(flashraw_file_exif); }
+    /// XMP packet (UTF-8 XML), zero-copy: valid while this file lives. Empty when the file has none.
+    span<const std::uint8_t> xmp() const { return optional_bytes(flashraw_file_xmp); }
+
     /// All metadata as JSON.
     std::string metadata_json() const { return detail::take_string(flashraw_file_metadata_json(h())); }
 
@@ -747,6 +753,15 @@ private:
             throw invalid_argument_error(FLASHRAW_ERROR_INVALID_ARGUMENT, "InvalidArgument",
                                          "flashraw::file used after move", "");
         return f_.get();
+    }
+    span<const std::uint8_t> optional_bytes(const std::uint8_t *(*getter)(const flashraw_file *, std::size_t *)) const {
+        std::size_t len = 0;
+        const std::uint8_t *p = getter(h(), &len);
+        if (!p) {
+            if (flashraw_last_error_code() != FLASHRAW_ERROR_NOT_AVAILABLE) detail::throw_status(flashraw_last_error_code());
+            return span<const std::uint8_t>();
+        }
+        return span<const std::uint8_t>(p, len);
     }
     template <class T> std::optional<T> opt(bool (*getter)(const flashraw_file *, T *)) const {
         T v{};

@@ -62,6 +62,14 @@ mod bindings {
         }));
     }
 
+    /// `[ptr, len]` of bytes in WASM memory, or `null`.
+    fn span(b: Option<&[u8]>) -> JsValue {
+        match b {
+            Some(b) => js_sys::Array::of2(&(b.as_ptr() as usize as f64).into(), &(b.len() as f64).into()).into(),
+            None => JsValue::NULL,
+        }
+    }
+
     fn to_js(e: ApiError) -> JsValue {
         let err = js_sys::Error::new(&e.message);
         let _ = js_sys::Reflect::set(&err, &"kind".into(), &e.kind.into());
@@ -225,6 +233,17 @@ mod bindings {
             let (off, len, info) = api::preview_span(&self.raw, which).map_err(to_js)?;
             let ptr = self.input_ptr() + off;
             Ok(js_sys::Array::of3(&(ptr as f64).into(), &(len as f64).into(), &info.into()))
+        }
+        /// `[ptr, len]` of the EXIF metadata (a standalone TIFF stream), or `null`. The bytes live
+        /// as long as this handle.
+        #[wasm_bindgen(js_name = exifSpan)]
+        pub fn exif_span(&self) -> JsValue {
+            span(self.raw.exif())
+        }
+        /// `[ptr, len]` of the XMP packet, or `null`.
+        #[wasm_bindgen(js_name = xmpSpan)]
+        pub fn xmp_span(&self) -> JsValue {
+            span(self.raw.xmp())
         }
         /// Decode a preview to RGBA8.
         #[wasm_bindgen(js_name = decodePreview)]
