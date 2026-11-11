@@ -120,6 +120,24 @@ with flashraw.open("photo.ARW") as raw:
 ```
 
 Selectors: `"largest"` (default), `"smallest"`, an index into `raw.previews` or a `PreviewInfo`.
+
+## EXIF and XMP
+
+`raw.metadata` normalises the common tags. For every other EXIF tag, maker notes included, `raw.exif` gives
+the EXIF as a standalone TIFF stream (`bytes`, or `None` when the file has none) for an EXIF library, and
+`raw.xmp` the XMP packet:
+
+```python
+import io, exifread
+with flashraw.open("photo.CR3") as raw:
+    tags = exifread.process_file(io.BytesIO(raw.exif))   # IFD0, EXIF, GPS, maker note
+    app1 = b"Exif\0\0" + raw.exif                       # the payload of a JPEG APP1 segment (piexif)
+    xml = raw.xmp.decode() if raw.xmp else None
+```
+
+TIFF-based files and CR3 are rebuilt from their directories (without pointers to image data); the maker
+note keeps its offset from the TIFF header, so the vendor offsets inside it stay valid. RAF and X3F return
+the EXIF of their embedded JPEG preview as it is.
 Decoded previews do not have their orientation applied (`p.info.orientation`).
 
 ## Decoding

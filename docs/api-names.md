@@ -51,6 +51,7 @@ aarch64, SIMD128 on WebAssembly); the rest of the develop pipeline is the same c
 | Tile | `decode_tile(index, opts)` | `--tile N` | `decode_tile(index)` | `decodeTile(index)` |
 | Crop RGB outputs | `crop: bool` | (always cropped) | `crop=True \| "active"` (`"active"` is Python/JS only) | `crop: true \| 'active'` |
 | DNG opcodes | `apply_opcodes` | `--no-opcodes` | `apply_opcodes` | `applyOpcodes` |
+| EXIF as a standalone TIFF stream, XMP packet | `FlashRaw::exif()`, `FlashRaw::xmp()` (`Option<&[u8]>`) | `flashraw exif FILE OUT`, `flashraw xmp FILE OUT` | `raw.exif`, `raw.xmp` (`bytes` or `None`) | `await raw.exif()`, `await raw.xmp()` (`Uint8Array` or `null`) |
 | Preview fallback | `preview_fallback` | `--preview-fallback` | `preview_fallback` | `previewFallback` |
 | Colour space | `color_space: ColorSpace` | `--color-space` | `color_space` | `colorSpace` |
 | ICC profile | `output_profile`, `RenderingIntent`, black point compensation | `--output-profile`, `--intent`, `--bpc` | `output_profile`, `intent`, `black_point_compensation` | `outputProfile`, `intent`, `blackPointCompensation` |

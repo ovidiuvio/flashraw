@@ -119,6 +119,7 @@ All functions are prefixed `flashraw_`. Handles are opaque (`flashraw_file`, `fl
 | calibration | `file_cfa`, `file_black_level`, `file_white_level`, `file_white_level_max`, `file_white_balance` (as-shot), `file_white_balance_applied` (true when the camera already applied it to the samples: Sony lossless YCbCr M/S, Nikon sNEF; RGB outputs then develop with unit multipliers, and raw-output consumers must not apply it again), `file_color_matrix_count/color_matrix` (colour, forward, calibration), `file_color_source` |
 | exposure | `file_iso`, `file_exposure_time`, `file_f_number`, `file_focal_length`, `file_focal_length_35mm`, `file_exposure_bias`, `file_lens_focal_range` (each returns `false` when not recorded) |
 | previews | `file_preview_count`, `file_largest_preview`, `file_smallest_preview`, `file_preview_info`, `file_preview_bytes` (zero-copy) |
+| EXIF, XMP | `file_exif` (EXIF as a standalone TIFF stream, built on the first call), `file_xmp` (zero-copy); NULL with `FLASHRAW_ERROR_NOT_AVAILABLE` when the file has none. C++: `file::exif()`, `file::xmp()` (empty spans when absent) |
 | tiles | `file_unit_count`, `file_unit` (rectangles to pass as decode regions) |
 | everything else | `file_metadata_json()` — the escape hatch: all metadata (EXIF, GPS, DNG tags, orientation records, opcode lists, capabilities) as JSON, so new fields need no ABI change |
 
@@ -191,7 +192,7 @@ with one warning per damaged unit. `FLASHRAW_CORRUPTION_STRICT` turns that into
 | `flashraw_file *` | caller | `flashraw_file_free()` |
 | `flashraw_frame *` | caller | `flashraw_frame_free()` (independent of the file: frames may outlive it) |
 | `const char *` from `file_*` getters | the file | `flashraw_file_free()` |
-| `const uint8_t *` from `file_preview_bytes` | the file (points into the input) | `flashraw_file_free()` |
+| `const uint8_t *` from `file_preview_bytes`, `file_exif`, `file_xmp` | the file | `flashraw_file_free()` |
 | `const void *` from `frame_data`, `const char *` from `frame_*` | the frame | `flashraw_frame_free()` |
 | `char *` from `*_json()` | caller | `flashraw_string_free()` |
 | `const char *` from `version`, `detect_format`, `*_name` | library (static) | forever |

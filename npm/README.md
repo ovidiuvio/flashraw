@@ -45,6 +45,8 @@ raw.metadata.camera.name;                // "Canon EOS 5D Mark III"
 raw.metadata.width; raw.metadata.height; // size after default crop
 
 const preview = await raw.preview();     // { data: Uint8Array, mimeType, width, height, orientation } | null
+const exif = await raw.exif();           // Uint8Array | null: EXIF as a standalone TIFF stream, for an EXIF library
+const xmp = await raw.xmp();             // Uint8Array | null: the XMP packet (UTF-8 XML)
 
 const frame = await raw.decode({ backend: 'auto', output: 'raw-u16' });
 frame.width; frame.height; frame.cfa?.pattern; frame.backend.decode; frame.timings; frame.data; // Uint16Array

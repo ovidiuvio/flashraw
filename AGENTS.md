@@ -98,7 +98,8 @@ fn main() -> flashraw::Result<()> {
 
 Other outputs: `RawF32`, `NormalizedF32`, `LinearRgb16`, `LinearRgbF16` (`as_f16_bits()`). Other entry points:
 `decode_tile(index, opts)`, `units()`, `thumbnail()`, `decode_preview_rgb(preview)`, `supports(bytes)`,
-`capabilities()`. Arbitrary ICC output profile (feature `icc`, default): `DecodeOptions::output_profile`.
+`capabilities()`, `exif()` (every EXIF tag, maker note included, as a standalone TIFF stream for an EXIF
+parser such as `kamadak-exif`), `xmp()`. Arbitrary ICC output profile (feature `icc`, default): `DecodeOptions::output_profile`.
 Full API: <https://docs.rs/flashraw> (after release) or `cargo doc --open -p flashraw`.
 
 ### Errors and warnings
@@ -153,6 +154,7 @@ flashraw info photo.CR2                 # summary: format, camera, geometry, lev
 flashraw info --json photo.CR2          # machine-readable
 flashraw dump-metadata photo.CR2        # everything, as JSON
 flashraw preview photo.CR2 preview.jpg  # largest embedded preview; `thumbnail` for the smallest
+flashraw exif photo.CR2 exif.tif        # all EXIF (maker note included) as a standalone TIFF stream; `xmp` for XMP
 flashraw decode photo.CR2 out.jpg --output rgba8             # developed 8-bit sRGB JPEG
 flashraw decode photo.CR2 out.tif --output rgb16 --color-space display-p3   # 16-bit TIFF with ICC profile
 flashraw decode photo.CR2 half.ppm --output rgb16 --demosaic half           # half resolution
@@ -186,6 +188,7 @@ with flashraw.open("photo.CR2", max_samples=200_000_000, max_dimension=20_000) a
     m = raw.metadata                       # no pixels decoded
     print(m.camera.name, m.width, m.height, m.exposure.iso)
     jpeg = raw.preview_bytes()             # embedded JPEG bytes or None
+    exif = raw.exif                        # every EXIF tag, maker note included: TIFF bytes for an EXIF library, or None
     f = raw.decode(output="rgba8", color_space="display-p3")   # NumPy uint8 (h, w, 4)
     pixels = f.array
     print(f.incomplete, [w for w in f.warnings], f.source, len(f.icc_profile or b""))
@@ -217,6 +220,7 @@ const raw = await FlashRaw.open(await readFile('photo.CR2'), {
 });
 console.log(raw.metadata.camera.name, raw.metadata.width, raw.metadata.height, raw.metadata.exposure.iso);
 const preview = await raw.preview();                 // { data: Uint8Array, mimeType, width, height, orientation } | null
+const exif = await raw.exif();                       // Uint8Array | null: EXIF as a standalone TIFF stream (raw.xmp() for XMP)
 const img = await raw.decode({ output: 'rgba8', colorSpace: 'display-p3' });
 // img.data is a Uint8ClampedArray: new ImageData(img.data, img.width, img.height)
 const half = await raw.decode({ output: 'rgb16', demosaic: 'half-size' });
