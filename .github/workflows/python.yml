@@ -7,6 +7,13 @@ name: python
 # Manual only: CI runs locally (tools/ci/local.sh, docs/testing.md).
 on:
   workflow_dispatch:
+  # Called by release.yml to build the release from its tag.
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build; empty for the ref of the run
+        type: string
+        default: ""
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,6 +33,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -59,6 +68,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -82,6 +93,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - name: Build sdist
         uses: PyO3/maturin-action@v1
         with:
@@ -105,6 +118,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"

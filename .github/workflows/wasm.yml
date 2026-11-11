@@ -3,6 +3,13 @@ name: wasm
 # Manual only: CI runs locally (tools/ci/local.sh, docs/testing.md).
 on:
   workflow_dispatch:
+  # Called by release.yml to build the release from its tag.
+  workflow_call:
+    inputs:
+      ref:
+        description: Git ref to build; empty for the ref of the run
+        type: string
+        default: ""
 
 jobs:
   wasm:
@@ -12,6 +19,8 @@ jobs:
         working-directory: npm
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
       # Nightly + rust-src builds the multithreaded variant (-Z build-std with atomics);
       # stable (installed last, so it is the default) builds everything else.
       - uses: dtolnay/rust-toolchain@nightly
