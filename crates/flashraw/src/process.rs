@@ -355,7 +355,7 @@ pub struct DevelopParams {
     /// a four-colour CFA (in [`CfaPattern::four_colour_order`]).
     pub wb: [f32; 4],
     /// The balance the edge-aware demosaic applies to the mosaic before interpolating (the
-    /// same as `wb` except in [`DevelopParams::camera_rgb`], which develops unbalanced).
+    /// same as `wb` except in `DevelopParams::camera_rgb`, which develops unbalanced).
     pub dm_wb: [f32; 4],
     pub cam_to_rgb: [[f32; 3]; 3],
     /// Four-colour CFAs: camera channels → linear sRGB (see [`camera4_to_srgb`]); when set
@@ -462,7 +462,7 @@ const RECON_HEADROOM: f32 = 1.5;
 
 /// What [`Highlights::Reconstruct`] knows about a frame: predictions of a clipped channel from
 /// the others in white-balanced linear camera RGB, fitted on the frame's unclipped blocks
-/// ([`fit_reconstruction`]). The default predicts nothing.
+/// (`fit_reconstruction`). The default predicts nothing.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct ReconModel {
     /// `alone[k]`: channel `k` clipped alone is `a * first other + b * second other`.
